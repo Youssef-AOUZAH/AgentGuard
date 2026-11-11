@@ -12,6 +12,16 @@ A short record of choices we made and why, so neither of us has to reconstruct t
 
 **No parser generators in the core.** The lexer and parser are written by hand, because this is a compilers course project and that is the part being assessed. Tree-sitter or `bash -n` may be used in tests as an independent oracle to compare our parse against.
 
+**The grammar is a documented subset of POSIX Issue 8, section 2.** We use the standard's own token names and productions rather than inventing our own, so our accepted language is checkable against a specification. Every existing tool in this space borrows a parser instead (CARE uses `bashlex`, bashguard uses `tree-sitter-bash`, others use regex), and none states what language it accepts; see `docs/related-work.md`. The accepted subset and the explicit rejected-construct list are in `compiler/grammar.md`.
+
+**Anything outside the grammar is a denial, not a parse failure.** This is what makes the from-scratch grammar a security property rather than a limitation, and it is why unspecified POSIX behaviour is also rejected: a divergence between our reading and the real shell's is exactly a bypass.
+
+**Words carry quoting provenance; we never expand.** A word is a list of parts, each tagged with how it was written (literal, single-quoted, `$'...'`, parameter expansion, command substitution, glob, and so on), and a word is resolved only when every part is statically known. The prior tools normalize and decode to produce a string to match; normalization is lossy, and refusing to decide is not. This is the direct response to the GuardFall quoting bypasses.
+
+**The gate is session-aware.** We track the working directory, resolved variable assignments, and the history of denied effects. CARE states that its mediation is stateless and per-command, which is why a sequence like `cd ~/Desktop` followed by `cat notes.txt` is invisible to it. Session state is also what makes retry detection possible, which is the survey's RG3 "verifier tax" and the gap we are aiming at.
+
+**Verdicts form a lattice and only ever tighten.** `ALLOW < ESCALATE < DENY`; every stage may raise a verdict and none may lower it. CARE reports that its LLM judge made realised harm *worse* than its static profile by flipping warn cases to allow, which is the empirical argument for the rule already in `AGENTS.md` that the classifier may only tighten.
+
 ## Deferred
 
 **CI guard script.** The hard rules in `AGENTS.md` (the compiler never executes what it analyzes, no committed secrets or data, corpus entries are data not scripts) are prose only; nothing enforces them. The plan is a Python script in `.github/scripts/` run as a CI step, using the `ast` module to reject `eval`, `exec`, `subprocess` and friends in `compiler/` and `classifier/` while exempting `gate/`, whose sandboxed executor legitimately needs them. Deferred until there is code for it to check.
