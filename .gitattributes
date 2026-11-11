@@ -1,0 +1,7 @@
+# Commands and corpus fixtures are shell text: a stray CR changes how a command tokenizes,
+# so keep line endings LF everywhere, on Windows checkouts too.
+* text=auto eol=lf
+
+*.png binary
+*.pdf binary
+*.pptx binary

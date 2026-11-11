@@ -1,0 +1,4 @@
+-r requirements-dev.txt
+# Only needed to run the real zero-shot NLI model (classifier/, bench/); CI does not install these.
+transformers
+torch
