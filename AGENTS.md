@@ -102,6 +102,8 @@ Each of `compiler/`, `classifier/`, `gate/`, `bench/` contains its code, a `test
 
 ## Rules for coding agents in this repo
 
+- **Start at the "Where we are, and what to pick up next" section of `TEAM.md`.** It says what is built, what is ready to start, and what is blocked and must not be started yet. Picking up a blocked piece means inventing an interface that the other member's code will contradict.
+- **Do not resolve an open question yourself.** The entries under "Open" in `docs/decisions.md` are decisions for the two team members. If your task depends on one, stop and say so rather than choosing a default and proceeding.
 - Both members work on all aspects; ownership is per piece, not per area (see `TEAM.md`). Only edit files belonging to the piece you were assigned, plus its tests. Do not touch the other person's piece without being asked. If you need a change there, say so and let the human open the request.
 - Never change `compiler/syntax.py`, `compiler/types.py` or `compiler/grammar.md` without being explicitly told to. These are the seams in `docs/interfaces.md`; a change to one is a change to both members' code.
 - Never push to `main`. Work on the member's own branch and open a pull request; it merges only after CI passes and the other member approves (see `CONTRIBUTING.md`). Run the CI checks locally before pushing.

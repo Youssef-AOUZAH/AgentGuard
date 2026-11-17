@@ -44,6 +44,31 @@ Not yet assigned, and deliberately left open until we agree: the **policy DSL's 
 | Paper: design, evaluation, discussion | Younes |
 | Presentation | Both, one area section each, then swap |
 
+## Where we are, and what to pick up next
+
+Read this before starting work, human or agent. It is the one place that says what is built and what is blocked, and it is kept current.
+
+**Built:** the lexer (`compiler/lexer.py`, 50 tests), the token and word types (`compiler/syntax.py`), the accepted language (`compiler/grammar.md`), and the design documents in `docs/`.
+
+**Start now, nothing blocks these:**
+
+| Piece | Owner | Comes from |
+|---|---|---|
+| `compiler/types.py` — `Effect`, `EffectKind`, `Resolution`, `Zone`, `Verdict`, `Decision`, `SessionState` | Younes | `docs/policy-rules.md` §1–§4 and `docs/interfaces.md` §S3–S5 |
+| `bench/schema.md` — the fields of one corpus entry | Younes | `docs/interfaces.md` §S7 |
+| The knowledge table — the forty command heads | Younes | `docs/policy-rules.md` §2 |
+| The AST node set, added to `compiler/syntax.py` | Youssef | `compiler/grammar.md` §3.1 |
+
+`compiler/types.py` unblocks the most work of anything in the repo: five of the ten seams in `docs/interfaces.md` are declared in it.
+
+**Blocked, do not start yet:**
+
+- `compiler/resolve.py` and `compiler/effects.py` consume the AST, and the AST node set does not exist yet. Starting the resolver now means inventing node shapes that the parser will then contradict, and one of us throwing the work away. Wait for the node set to land in `compiler/syntax.py`.
+- `compiler/policy.py` needs both `types.py` and a decision on the policy language's syntax.
+- The classifier dataset (`classifier/`, piece 2b) needs `Decision` to exist, because the record it serialises carries the rule ids and effects that caused the rejection — see `docs/interfaces.md` §S6. This is later than the order of work below implies.
+
+**Open questions that an agent must not answer on its own.** Four entries under "Open" in `docs/decisions.md` are decisions for the two of us, not defaults to be picked: who writes the policy DSL's front end, who converts sandbox observations into effects, the policy language's syntax, and what a rejection message tells the agent. If a task runs into one of these, stop and leave it to the humans rather than choosing and proceeding.
+
 ## Order of work
 
 1. **Together first:** agree the supported subset, `compiler/types.py` and the policy language on paper before writing code.
