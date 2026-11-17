@@ -48,7 +48,7 @@ Not yet assigned, and deliberately left open until we agree: the **policy DSL's 
 
 Read this before starting work, human or agent. It is the one place that says what is built and what is blocked, and it is kept current.
 
-**Built:** the lexer (`compiler/lexer.py`, 50 tests), the token and word types (`compiler/syntax.py`), the accepted language (`compiler/grammar.md`), and the design documents in `docs/`.
+**Built:** the lexer (`compiler/lexer.py`) and the parser (`compiler/parser.py`), 170 tests between them including a differential test against `bash -n`; the token types and the AST node set (`compiler/syntax.py`); the accepted language (`compiler/grammar.md`); and the design documents in `docs/`.
 
 **Start now, nothing blocks these:**
 
@@ -57,13 +57,13 @@ Read this before starting work, human or agent. It is the one place that says wh
 | `compiler/types.py` — `Effect`, `EffectKind`, `Resolution`, `Zone`, `Verdict`, `Decision`, `SessionState` | Younes | `docs/policy-rules.md` §1–§4 and `docs/interfaces.md` §S3–S5 |
 | `bench/schema.md` — the fields of one corpus entry | Younes | `docs/interfaces.md` §S7 |
 | The knowledge table — the forty command heads | Younes | `docs/policy-rules.md` §2 |
-| The AST node set, added to `compiler/syntax.py` | Youssef | `compiler/grammar.md` §3.1 |
+| `compiler/resolve.py` and `compiler/effects.py` — the parser hands over a `Script`; read the docstrings in `compiler/syntax.py` first | Younes | `docs/interfaces.md` §S2–S4, `docs/policy-rules.md` §1–§2, and the two parser findings at the top of "Open" in `docs/decisions.md`, which this code must handle |
+| The canonical emitter, `compiler/emit.py` | Youssef | `docs/related-work.md` §3, `docs/interfaces.md` |
 
 `compiler/types.py` unblocks the most work of anything in the repo: five of the ten seams in `docs/interfaces.md` are declared in it.
 
 **Blocked, do not start yet:**
 
-- `compiler/resolve.py` and `compiler/effects.py` consume the AST, and the AST node set does not exist yet. Starting the resolver now means inventing node shapes that the parser will then contradict, and one of us throwing the work away. Wait for the node set to land in `compiler/syntax.py`.
 - `compiler/policy.py` needs both `types.py` and a decision on the policy language's syntax.
 - The classifier dataset (`classifier/`, piece 2b) needs `Decision` to exist, because the record it serialises carries the rule ids and effects that caused the rejection — see `docs/interfaces.md` §S6. This is later than the order of work below implies.
 

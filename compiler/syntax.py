@@ -58,10 +58,18 @@ class Diag(StrEnum):
     DECODED_NUL = "decoded-nul-byte"
     IO_LOCATION_REDIRECT = "io-location-redirect"
 
-    # Reserved for the parser
+    # Raised by the parser. Each refused construct names itself, so the agent is told which
+    # construct was the problem and a regression test can assert the reason, not just the denial.
     UNSUPPORTED_CONSTRUCT = "unsupported-construct"
     UNEXPECTED_TOKEN = "unexpected-token"
     MALFORMED_ASSIGNMENT = "malformed-assignment"
+    CONTROL_STRUCTURE = "control-structure"
+    BRACE_GROUP = "brace-group"
+    FUNCTION_DEFINITION = "function-definition"
+    BASH_CONDITIONAL = "bash-conditional"
+    ARITHMETIC_COMMAND = "arithmetic-command"
+    BASH_ONLY_OPERATOR = "bash-only-operator"
+    SUBSTITUTION_IN_EXPANSION = "substitution-in-expansion"
 
 
 class LexError(Exception):
@@ -360,7 +368,9 @@ class Redirect:
 
     `target` is the filename word for a file redirection and None for a here-document, where
     `body` carries the text instead. For `<&` and `>&` the target is the descriptor word, so
-    `2>&1` has target `1` -- a word and not an int, because `>&$FD` is legal and unresolvable.
+    `2>&1` has target `1`. The parser guarantees that a duplication target is a known run of
+    digits or `-`: bash reads `>&file` as "send both streams to file", which is a write that
+    `DUP_OUT` would hide, so that form and any unresolvable target such as `>&$FD` are refused.
     """
 
     op: RedirectOp
