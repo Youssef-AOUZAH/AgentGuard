@@ -2,6 +2,8 @@
 
 AI coding agents can run shell commands directly when they have broad permissions, and string based denylists are easy to get around. agentGuard treats each command as a program: it parses it, works out what it would do to files, the network and processes, and checks those effects against a policy before anything runs. When an agent is rejected and tries another route to the same goal, a zero-shot NLI classifier (natural language inference, open source, no API key) flags the retry.
 
+> **This is a research prototype, not a security boundary.** It is coursework, it has not been audited, and it must not be put in front of an agent that can reach anything you care about. Use an operating-system sandbox for that. What the compiler adds on top of a sandbox is a *reason* the agent can act on, not a stronger guarantee. See [`SECURITY.md`](SECURITY.md).
+
 Compilers course team project by **Youssef Aouzah** and **Younes Menfalouti**, UM6P College of Computing. Deliverables: a working prototype, an evaluation against string denylist baselines, a short paper and a presentation.
 
 ## Publication
@@ -40,7 +42,7 @@ Each of `compiler/`, `classifier/`, `gate/` and `bench/` has its own tests and a
 
 ## Safety
 
-The compiler never executes the commands it analyzes. It fails closed: errors mean DENY or ESCALATE. Destructive test commands run only in disposable sandboxes, never on real files. No secrets or real personal data are committed. See the hard rules in `AGENTS.md`.
+The compiler never executes the commands it analyzes. It fails closed: errors mean DENY or ESCALATE. Destructive test commands run only in disposable sandboxes, never on real files. No secrets or real personal data are committed. See the hard rules in `AGENTS.md`, and [`SECURITY.md`](SECURITY.md) for how to report a bypass and how we handle bypasses we find in other people's tools.
 
 ## Getting started
 
@@ -57,3 +59,7 @@ pytest
 The classifier needs extra packages (`pip install -r requirements.txt`) and downloads an open NLI model on first use; the tests never do.
 
 4. Work on your own branch and open a pull request into `main`; see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Licence
+
+The code is under the MIT License ([`LICENSE`](LICENSE)). The corpora and experimental data under `bench/` are licensed separately, under CC BY 4.0 ([`bench/LICENSE`](bench/LICENSE)), because data and code want different terms and we expect the corpus to be reused on its own. Corpus entries derived from an external source — MITRE ATT&CK, GTFOBins, RedCode, CARE's published rule data — carry that source's attribution requirements and record their provenance.

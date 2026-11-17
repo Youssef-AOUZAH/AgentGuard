@@ -1,0 +1,31 @@
+# Licence for the corpora and experimental data
+
+Everything under `bench/` — the bypass corpus, the benign task corpus, policy
+fixtures, run manifests and recorded results — is licensed separately from the
+code, under:
+
+    Creative Commons Attribution 4.0 International (CC BY 4.0)
+    SPDX-License-Identifier: CC-BY-4.0
+    Full text: https://creativecommons.org/licenses/by/4.0/legalcode
+    Summary:   https://creativecommons.org/licenses/by/4.0/
+
+Copyright (c) 2026 Youssef Aouzah and Younes Menfalouti.
+
+You may share and adapt this material for any purpose, including commercially,
+provided you give appropriate credit, link to the licence, and indicate whether
+you made changes.
+
+The code in this repository is under the MIT License instead; see the `LICENSE`
+file at the repository root. Where a corpus entry is derived from an external
+source — MITRE ATT&CK, GTFOBins, RedCode, CARE's published rule data — that
+source's own terms and attribution requirements apply to the derived entry, and
+the entry records its provenance.
+
+## A note on what this material is
+
+The bypass corpus contains shell commands whose purpose is to defeat a command
+filter. They are published so that our results can be reproduced and so that
+other guards can be tested against them. They are written as generic shell
+technique aimed at throwaway container paths, never as working attacks on a
+named product, and they are data files rather than runnable scripts. See
+`SECURITY.md` for the disclosure policy that goes with that.
