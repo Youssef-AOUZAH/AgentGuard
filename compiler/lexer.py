@@ -147,6 +147,17 @@ class _Lexer:
 
             self._read_word_token()
 
+        # A here-document whose body never started: `cat <<'EOF'` with no newline after it.
+        # Bash warns and runs with an empty body; we refuse, since the command as written is
+        # incomplete and the token would otherwise reach the parser with no body attached.
+        if self.pending:
+            _, _, delimiter = self.pending[0]
+            raise LexError(
+                Diag.UNTERMINATED_HEREDOC,
+                f"here-document has no body; it must be closed by a line containing {delimiter.value!r}",
+                self.i,
+            )
+
         self.tokens.append(Token(TokenKind.EOF, "", self.i))
         return self.tokens
 
@@ -250,7 +261,9 @@ class _Lexer:
         # descriptor number, so `2>f` redirects fd 2 while `echo 2 > f` passes the word `2`.
         nxt = self.src[self.i] if self.i < self.n else ""
         # `nxt in "<>"` would be True at end of input, since "" is a substring of everything.
-        if nxt in ("<", ">") and raw.isdigit():
+        # `isdigit` alone is not enough: it is True for `²` and `٣`, which bash treats as an
+        # ordinary word, and `int("²")` raises. POSIX means the ASCII digits.
+        if nxt in ("<", ">") and raw.isascii() and raw.isdigit():
             self.tokens.append(Token(TokenKind.IO_NUMBER, raw, start, word=word))
             return
 
