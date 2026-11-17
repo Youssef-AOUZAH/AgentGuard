@@ -74,7 +74,7 @@ The seam that makes us different from the stateless prior work, and the only one
 - **Consumed by** the policy engine (Younes), the gate's message to the agent (Youssef), and the bench metrics (Younes).
 - **Declared in** `compiler/types.py`.
 - **Shape.** `Effect(kind, target, resolution, origin)`, with the fourteen kinds, the target types and the resolution values all listed in `docs/policy-rules.md` §1. `origin` is the AST node, which is how a verdict points at a character range — so an `Effect` is only as useful as the `pos` fields the parser filled in, which is a dependency of S2 on this seam that is easy to forget.
-- **Pitfall.** Zones are computed against session state, not against the raw text, so an `Effect`'s target is a resolved absolute path or it is unresolved. A relative path must never survive into an `Effect`; if the resolver cannot make it absolute, the resolution is unresolved and says why.
+- **Pitfall.** Zones are computed against session state, not against the raw text, so an `Effect`'s target is an absolute path, an absolute directory bounding a set of them, or `UNKNOWN` with a reason. A relative path must never survive into an `Effect`: if the resolver cannot make it absolute it is `UNKNOWN`, and a bounded target's `dir` is absolute too. The zone of a `BOUNDED` target is the join over its whole subtree, which is the one place this seam is easy to implement wrongly and safely-looking — see `docs/policy-rules.md` §2.
 
 ## S5. The decision — policy to gate
 
