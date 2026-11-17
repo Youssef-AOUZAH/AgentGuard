@@ -50,6 +50,14 @@ Correction to how we argue this. "No API key" does **not** distinguish us from C
 
 **Which NLI model.** Piece 2a. Needs to be open-weight, small enough to run on a laptop in the command path, and good enough on the (rejected, next command) task. Record the choice and the latency here once measured.
 
+**Resolution has three values, not two: `KNOWN`, `BOUNDED(dir)`, `UNKNOWN(reason)`.** Adopted, replacing the `RESOLVED`/`UNRESOLVED` pair. This was the open question at the end of `docs/policy-rules.md` and it had to be settled before `compiler/types.py` was written, because the field is the first thing in that file and rule R2 turns on it.
+
+The argument that decided it: **the policy never needs a filename, it needs a region.** Every clause in R4 is a zone test, and a zone is a property of a directory prefix. Two values threw the region away and so collapsed `rm *`, `rm -rf build` and `find . -type f -delete` into one category with no correct treatment — denying it rejects three commands agents run constantly, which is the axis the field is judged on, since over-refusal is the limitation the AgentGuard paper names as its own and a 0.91% false-positive rate is CARE's headline claim; allowing it permits `find / -delete`. Keeping the bound separates them: bounded-by-`workspace/build` is allowed, bounded-by-`/` is denied, and `rm $(cat list)` is `UNKNOWN` and denied by R2.
+
+Two consequences had to be specified rather than left implied. A `BOUNDED(dir)` target covers a subtree, so **its zone is the join of every zone that subtree contains**, not the zone of `dir` itself — otherwise `BOUNDED(~)` reads as `HOME` while containing `~/.ssh`, and `grep -r password ~` is allowed. And containment is **textual, not symlink-aware**, which is now a named residual risk in `docs/threat-model.md` rather than an unstated assumption.
+
+Allowing destruction inside the workspace is not a concession: `docs/threat-model.md` already lists it among the things we do not defend against, since the agent exists to change the workspace. Three-valued resolution is what makes the code match the claim we had already published.
+
 **The command parser fails fast; the policy DSL recovers.** Two error models in one project, each chosen for its input, and the contrast is worth a section of the report.
 
 `parse` raises `ParseError(code, message, pos)` on the first construct it refuses, structurally identical to `LexError`, and a Hypothesis property test asserts that `ParseError` is the only exception escaping it for any token list the lexer can produce. The gate then has two failure paths, both DENY with a cited `Diag`. Three codes are already reserved for it in `compiler/syntax.py`: `UNSUPPORTED_CONSTRUCT`, `UNEXPECTED_TOKEN`, `MALFORMED_ASSIGNMENT`.
