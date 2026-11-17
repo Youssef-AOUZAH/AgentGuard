@@ -14,12 +14,14 @@ Owning a piece means you write its code, its tests and its entries in the area's
 
 - **Cross review.** Every pull request is reviewed by the other member. The reviewer must be able to explain the change; if they cannot, the code needs a clearer docstring or a simpler design.
 - **Swap and explain.** At the end of each phase, each member walks the other through their piece (parser, effect analysis, classifier, gate). The listener writes down anything unclear in `docs/`.
-- **Shared contract.** `compiler/types.py` (tokens, AST nodes, `Effect`, `Verdict`) is the interface between our pieces. We decide changes together and update all consumers in the same PR.
+- **Shared contract.** [`docs/interfaces.md`](docs/interfaces.md) specifies all ten points where our pieces meet: what crosses each one, which file declares it, who may change it, and where to find it. `compiler/syntax.py` (front-end types) and `compiler/types.py` (effects, verdicts, session state) are the two files those contracts live in. We decide changes to either together and update all consumers in the same PR.
 - **Pairing on the hard parts.** Resolver edge cases, the policy language and the experiment design are done together, not alone.
 
 ## Area 1: Compiler
 
-- **1a. Front end (Youssef).** Write the lexer and parser for the bash subset in `compiler/grammar.md`: quoting and escapes, simple commands, pipelines, lists (`&&`, `||`, `;`), redirections, subshells, command substitution, assignments. Reject anything outside the subset. Compare against `bash -n` or another parser in tests as an oracle.
+- **1a. Front end (Youssef).** Four deliverables. (i) The **lexer** for the bash subset in `compiler/grammar.md`: quoting and escapes, token recognition, here-documents, the bash-only operators. *Done.* (ii) The **AST node set** in `compiler/syntax.py`, which is the seam the resolver consumes, so it is agreed with Younes before the parser is written. (iii) The **parser**: simple commands, pipelines, lists (`&&`, `||`, `;`), redirections, subshells, assignments, the POSIX parser-lexer interaction rules, and a named diagnostic for every construct the grammar rejects. (iv) The **canonical emitter** in `compiler/emit.py`, which re-serialises the AST into the command the gate actually executes. Compare against `bash -n` and the argv oracle in tests.
+Not yet assigned, and deliberately left open until we agree: the **policy DSL's lexer and parser** (see `docs/decisions.md`). The policy language belongs to 1b by area, but its front end is the same kind of work as 1a.
+
 - **1b. Middle end (Younes).** Resolve words the way bash would (quote removal, escapes, known variables, `$'...'`, brace expansion where static), mark dynamic parts UNRESOLVED, then compute effects per command with a knowledge table of common tools, and evaluate the declarative policy in `policies/`.
 
 ## Area 2: Classifier

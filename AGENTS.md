@@ -31,6 +31,7 @@ Research question: can an effect-based compiler with a zero-shot intent classifi
 These are the equivalent of ethics rules in this project. Do not bend them.
 
 - **The compiler never executes what it analyzes.** No `eval`, `exec`, `subprocess`, `os.system` or shell invocation on agent-supplied or corpus commands inside `compiler/` or `classifier/`. Analysis is parsing and data flow only.
+  - **One narrow exception, for the argv oracle only.** The test that matters most for the lexer and the resolver is whether our fields equal the arguments bash really passes, and that can only be answered by asking bash. A test may therefore run `printf '%s\0' <word>` and compare, under all of these conditions: the words are generated or written in the test file, never read from the bypass corpus, a transcript, or any agent input; the only program invoked is the shell's own `printf`; it runs in a container or throwaway directory; and it lives in a test module, never in library code. `bash -n`, which parses without running, needs no exception. Nothing else about this rule is negotiable: if you find yourself wanting to execute a corpus command to find out what it does, that belongs in `bench/` with its own sandbox, not in the compiler.
 - **Fail closed.** A parse error, an unknown construct, or an internal exception in the compiler is a DENY (or ESCALATE), never ALLOW.
 - **The classifier can only tighten.** It may turn an ALLOW into ESCALATE or DENY. It must never turn a compiler DENY into ALLOW. Do not "fix" a false rejection by letting the classifier override the compiler.
 - **Dangerous commands run only in a sandbox.** The bypass corpus and agent experiments contain destructive commands. They may execute only in a disposable container or temporary directory created for that run, never on a developer's real files, home directory or credentials. Tests that check effects use a temp directory.
@@ -39,6 +40,8 @@ These are the equivalent of ethics rules in this project. Do not bend them.
 - **Do not weaken the compiler to make a test pass.** If a bypass gets through, the fix is a better analysis or policy and a new regression test, not an allowlist entry for that exact string.
 
 ## Scope
+
+The adversary, the one claim we make and the list of things we explicitly do not defend against are in `docs/threat-model.md`. Read it before changing any phase of the pipeline: our primary adversary is an agent that pursues a task past a denial without concealing itself, and several design choices only make sense against that adversary rather than against a deliberate attacker.
 
 In scope: bash-like commands issued by local coding agents; a policy language over effects; the NLI intent classifier; an evaluation against string denylist baselines.
 
@@ -68,22 +71,29 @@ command string
   -> effects    compiler/effects.py    set of Effect records (read, write, delete, exec, network, privilege)
   -> policy     compiler/policy.py     Verdict: ALLOW | DENY | ESCALATE, with reasons
   -> classifier classifier/            probabilities per label; may tighten the verdict
+  -> emitter    compiler/emit.py       the command re-serialised from our own AST
   -> gate       gate/                  message back to the agent; sandboxed execution if allowed
 ```
 
-The shared types (`Token`, AST nodes, `Effect`, `Verdict`) live in `compiler/types.py`. This file is the contract between the two team members' pieces, like a schema: change it only through a pull request reviewed by the other member, and update every consumer in the same PR.
+The emitter is the code-generation phase and it is not optional: what the gate executes is our re-serialisation of the AST we analysed, never the agent's original string. If our reading of the input ever diverges from the shell's, executing our own output means the thing that runs is the thing that was checked. See `docs/related-work.md` §3 for why no existing tool does this.
+
+**Every point where one member's piece hands something to the other's is specified in `docs/interfaces.md`** — what crosses, which file declares it, who may change it, and the mistake each seam invites. Read the seam you are working against before writing code at it, and if what you need is not declared there, agree the type first rather than passing a dict.
+
+The shared types are split in two, each with one author and one reviewer. `compiler/syntax.py` holds what the front end produces: `Token`, `Word`, `WordPart`, the AST nodes, diagnostics. `compiler/types.py` holds what the middle end produces and the gate consumes: `Effect`, `Resolution`, `Zone`, `Verdict`, `Decision`, `SessionState`. Both are contracts between the two members' pieces, like a schema: change either only through a pull request reviewed by the other member, and update every consumer in the same PR.
 
 ## Repository layout
 
 ```
 compiler/     lexer, parser, resolver, effect analysis, policy engine
-  types.py    shared types; changes only by reviewed pull request
+  syntax.py   front-end types (tokens, words, AST); changes only by reviewed pull request
+  types.py    middle-end types (effects, verdicts, session state); same rule
   grammar.md  the supported bash subset (EBNF); keep it in sync with the parser
 classifier/   zero-shot NLI intent classifier and its label definitions
 gate/         integration: pipeline runner, sandboxed executor, message to the agent
 bench/        bypass corpus, benign task corpus, baselines, agent experiments, metrics
 policies/     policy files (declarative rules over effects)
 docs/         design notes and decisions
+  interfaces.md  how the two members' pieces connect; read before working at a seam
 data/         gitignored; model caches, raw agent transcripts, generated datasets
 paper/        LaTeX for the final report
 ```
@@ -93,7 +103,7 @@ Each of `compiler/`, `classifier/`, `gate/`, `bench/` contains its code, a `test
 ## Rules for coding agents in this repo
 
 - Both members work on all aspects; ownership is per piece, not per area (see `TEAM.md`). Only edit files belonging to the piece you were assigned, plus its tests. Do not touch the other person's piece without being asked. If you need a change there, say so and let the human open the request.
-- Never change `compiler/types.py` or `compiler/grammar.md` without being explicitly told to.
+- Never change `compiler/syntax.py`, `compiler/types.py` or `compiler/grammar.md` without being explicitly told to. These are the seams in `docs/interfaces.md`; a change to one is a change to both members' code.
 - Never push to `main`. Work on the member's own branch and open a pull request; it merges only after CI passes and the other member approves (see `CONTRIBUTING.md`). Run the CI checks locally before pushing.
 - Write a test with every change. For the compiler, add a regression test for every bypass you fix: the failing command string, and the expected verdict.
 - Tests must be deterministic and offline. CI never downloads a model: tests for `classifier/` use a stub model with fixed scores; the real model runs only in `bench/` experiments, locally.
