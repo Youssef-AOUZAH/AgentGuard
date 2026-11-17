@@ -1,3 +1,6 @@
 ruff
 pytest
 pyyaml
+# Property-based testing: used for the fail-closed test (the lexer must return a
+# verdict and never raise, for arbitrary byte input).
+hypothesis
