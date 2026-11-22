@@ -52,7 +52,7 @@ These are not in POSIX, and a POSIX-only lexer reads each of them as two or more
 
 The first row is verified, not assumed: on bash 5.3.15, `ls /nonexistent &>cap.txt` puts the error message *inside* `cap.txt`, where the POSIX reading would background the command and leave the file empty. `tests/test_lexer.py::test_and_great_is_not_two_tokens` asserts we never emit `AMP` for it.
 
-Two further bash divergences live in the word rules rather than the operators, and both are verified. A tilde expands after an unquoted `=`, so `echo a=~` prints `a=` followed by the home directory. And inside `$'...'`, an escape bash does not recognise keeps its backslash, so `$'\8'` is the two characters `\8` and not `8`.
+Two further bash divergences live in the word rules rather than the operators, and both are verified. A tilde expands in more places than at the start of a word: in a word shaped like an assignment, meaning a valid unquoted name followed by the first `=`, bash also expands it right after that `=` and after each unquoted `:` that follows, even when the word is an ordinary argument. So `dd of=~/x` writes under the home directory, while `--opt=~/x`, `a-b=~/x` and `a=b=~/x` are literal. What follows the tilde must be empty, a login name, or a directory-stack reference such as `~+` or `~-`; any quoted character or expansion there switches expansion off, so `~'/x'` and `~$x` both keep a literal `~`. All twenty-seven forms we tried are checked against bash in `compiler/tests/test_lexer.py`. And inside `$'...'`, an escape bash does not recognise keeps its backslash, so `$'\8'` is the two characters `\8` and not `8`.
 
 ### 2.2 Word tokens
 

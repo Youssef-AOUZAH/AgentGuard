@@ -50,6 +50,10 @@ _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Characters that end a word (token-recognition rules 6 and 7).
 _WORD_DELIMITERS = frozenset(" \t\n") | OPERATOR_START_CHARS
 
+# What may follow `~` for bash to expand it: nothing, a login name, or a directory stack
+# reference (`~+`, `~-`, `~2`, `~+1`). Anything else makes `~` an ordinary character.
+_TILDE_PREFIX_RE = re.compile(r"|[+-]|[+-]?[0-9]+|[A-Za-z0-9._][A-Za-z0-9._-]*")
+
 # Allowed control characters. Everything else in the C0 range, and DEL, is refused: a stray
 # carriage return changes how a command tokenizes, and NUL truncates words in bash.
 _ALLOWED_CONTROL = frozenset("\t\n")
@@ -334,9 +338,15 @@ class _Lexer:
         start = self.i
         parts: list[WordPart] = []
         literal: list[str] = []
-        # Tilde expands at the start of a word and immediately after an unquoted `=`; we
-        # verified `echo a=~` prints `a=/c/Users/Youssef` on bash 5.3.15.
+        # Where bash expands a tilde, verified on 5.3.15 with printf: at the start of a word;
+        # and, in a word shaped like an assignment (a valid unquoted name, then the first `=`),
+        # right after that `=` and after each unquoted `:` that follows. Bash does this even for
+        # an ordinary argument, so `dd of=~/x` writes under the home directory. It does not
+        # happen after a second `=` (`a=b=~/x` is literal) or in a word whose part before `=` is
+        # not a name (`--opt=~/x`, `a-b=~/x` and `=~/x` are all literal).
         tilde_ok = True
+        seen_eq = False
+        assignment_shaped = False
 
         def flush() -> None:
             if literal:
@@ -395,10 +405,14 @@ class _Lexer:
                 continue
 
             if ch == "~" and tilde_ok:
-                flush()
-                parts.append(self._read_tilde())
-                tilde_ok = False
-                continue
+                tilde = self._read_tilde(in_assignment=assignment_shaped)
+                if tilde is not None:
+                    flush()
+                    parts.append(tilde)
+                    tilde_ok = False
+                    continue
+                # Not a tilde expansion after all: `~` is an ordinary character, and what
+                # follows it is read normally, quotes and expansions included.
 
             if ch in "*?":
                 flush()
@@ -423,9 +437,13 @@ class _Lexer:
                     tilde_ok = False
                     continue
 
+            if ch == "=" and not seen_eq:
+                seen_eq = True
+                assignment_shaped = not parts and is_name("".join(literal))
+                tilde_ok = assignment_shaped
+            else:
+                tilde_ok = ch == ":" and assignment_shaped
             literal.append(ch)
-            # `=` re-enables tilde expansion for the next character.
-            tilde_ok = ch == "="
             self.i += 1
 
         flush()
@@ -433,25 +451,38 @@ class _Lexer:
 
     # ------------------------------------------------------------------ tilde
 
-    def _read_tilde(self) -> WordPart:
-        """`~`, `~user`, `~+`, `~-`. Never resolved here.
+    def _read_tilde(self, *, in_assignment: bool) -> WordPart | None:
+        """`~`, `~user`, `~+`, `~-`, `~N`. Never resolved here. Returns None if it is not one.
 
-        A bare `~` becomes the session's home directory, but the lexer does not know it: HOME
-        is session state, and `~user` needs a passwd lookup. The resolver fills this in from
-        the fixed environment the executor owns, which is also why assignments to HOME are
-        denied - otherwise the meaning of `~` would be agent-controlled.
+        The tilde-prefix runs to the first `/`, or also the first `:` inside an assignment-shaped
+        word, and bash expands it only when that prefix is empty, a login name, or a directory
+        stack reference. Anything else switches expansion off and leaves `~` as an ordinary
+        character: a quoted character (`~'/x'` and `~""` are literal) or an expansion (`~$x` is
+        `~` followed by the value of x). This matters for more than precision: reading the whole
+        prefix as a user name used to swallow `"$` in `~"$(id)"`, hiding the start of a command
+        substitution inside a tilde.
+
+        A bare `~` becomes the session's home directory, but the lexer does not know it: HOME is
+        session state, and `~user` needs a passwd lookup. The resolver fills this in from the
+        fixed environment the executor owns, which is also why assignments to HOME are denied -
+        otherwise the meaning of `~` would be agent-controlled.
         """
         start = self.i
-        self.i += 1
-        j = self.i
-        while j < self.n and self.src[j] not in _WORD_DELIMITERS and self.src[j] not in "/:":
+        stops = "/:" if in_assignment else "/"
+        j = start + 1
+        while j < self.n and self.src[j] not in _WORD_DELIMITERS and self.src[j] not in stops:
             j += 1
-        user = self.src[self.i : j]
+        user = self.src[start + 1 : j]
+        if not _TILDE_PREFIX_RE.fullmatch(user):
+            return None
         self.i = j
-        raw = self.src[start : self.i]
-        reason = (
-            "~ expands to the session's home directory" if user == "" else f"~{user} needs a passwd lookup"
-        )
+        raw = self.src[start:j]
+        if user == "":
+            reason = "~ expands to the session's home directory"
+        elif user[0] in "+-0123456789":
+            reason = f"{raw} expands from the directory stack or the previous directory"
+        else:
+            reason = f"~{user} needs a passwd lookup"
         return WordPart(PartKind.TILDE, raw, reason=reason)
 
     # ------------------------------------------------------------------ quoting

@@ -322,6 +322,67 @@ def test_unterminated_heredoc_is_named():
     assert raises("cat <<'EOF'\nno terminator here\n") is Diag.UNTERMINATED_HEREDOC
 
 
+def test_heredoc_with_no_body_at_all_is_refused():
+    # Regression: `cat <<'EOF'` with nothing after it used to reach the parser with no body.
+    assert raises("cat <<'EOF'") is Diag.UNTERMINATED_HEREDOC
+
+
+# --------------------------------------------------------------------- tilde
+#
+# Each case below was checked against bash 5.3.15 with printf. "expands" means bash replaces the
+# tilde; the lexer must mark exactly those with a TILDE part and read everything else as literal.
+
+
+def _argument(src: str):
+    return [t for t in tokenize("printf " + src) if t.word is not None][-1].word
+
+
+@pytest.mark.parametrize(
+    "src",
+    ["~", "~/x", "~/'x'", "~-", "~+", "~root", "of=~/x", "of=~", "a=x:~/b", "a=x:b:~", "a=~:~/b"],
+)
+def test_tilde_that_bash_expands_is_marked(src):
+    assert _argument(src).has_kind(PartKind.TILDE)
+
+
+@pytest.mark.parametrize(
+    ("src", "value"),
+    [
+        ("~'/x'", "~/x"),  # a quoted character in the tilde-prefix switches expansion off
+        ('~""', "~"),
+        ("~\\a", "~a"),
+        ("'of='~/x", "of=~/x"),  # the `=` must be unquoted
+        ("'o'f=~/x", "of=~/x"),  # and so must the name before it
+        ("a-b=~/x", "a-b=~/x"),  # the part before `=` must be a valid name
+        ("=~/x", "=~/x"),
+        ("--opt=~/x", "--opt=~/x"),
+        ("a=b=~/x", "a=b=~/x"),  # only after the first `=`
+        ("--x=y:~/z", "--x=y:~/z"),  # and after `:` only in a word shaped like an assignment
+        ("a:~/x", "a:~/x"),
+    ],
+)
+def test_tilde_that_bash_leaves_alone_is_literal(src, value):
+    word = _argument(src)
+    assert not word.has_kind(PartKind.TILDE)
+    assert word.value == value
+
+
+def test_tilde_followed_by_an_expansion_is_a_literal_tilde():
+    # bash prints `~u` for `~$x` with x=u: the tilde stays, the variable expands.
+    word = _argument("~$x")
+    assert [p.kind for p in word.parts] == [PartKind.LITERAL, PartKind.PARAM_EXP]
+
+
+def test_substitution_after_a_tilde_is_not_swallowed():
+    # Regression: the tilde reader used to take `"$` in `~"$(id)"` as part of a user name, hiding
+    # the start of a command substitution inside the tilde.
+    word = _argument('~"$(id)"')
+    assert word.parts[0].kind is PartKind.LITERAL and word.parts[0].value == "~"
+    quoted = word.parts[1]
+    assert quoted.kind is PartKind.DQUOTED
+    assert quoted.parts[0].kind is PartKind.CMD_SUBST
+
+
 # --------------------------------------------------------------------- fail closed
 
 
