@@ -328,10 +328,20 @@ def test_substitution_whose_inside_does_not_lex_is_a_parse_error():
     assert refused("echo $(cat <(ls))") is Diag.PROCESS_SUBSTITUTION
 
 
-@pytest.mark.parametrize("src", ["echo ${x:-$(id)}", "echo ${x:=$(id)}", "echo $((1 + $(id)))"])
+@pytest.mark.parametrize(
+    "src",
+    ["echo ${x:-$(id)}", "echo ${x:=$(id)}", "echo $((1 + $(id)))", "echo $((1 + $( (id))))"],
+)
 def test_substitution_hidden_in_an_expansion_is_refused(src):
     # These parts are opaque to the lexer, so the substitution would run unseen.
     assert refused(src) is Diag.SUBSTITUTION_IN_EXPANSION
+
+
+@pytest.mark.parametrize("src", ["echo $((2+3))", "echo $(( $((1)) + 2 ))", "echo ${x:-$((1))}"])
+def test_arithmetic_without_a_substitution_is_accepted(src):
+    # Regression: `$((` is how arithmetic opens, and the first version of the hidden-substitution
+    # check matched it as a `$(`, refusing every arithmetic expansion. Found by the argv oracle.
+    parse_source(src)
 
 
 def test_empty_substitution_is_accepted():

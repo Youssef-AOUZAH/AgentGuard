@@ -27,6 +27,7 @@ fails fast while the policy language's parser should not.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 from compiler.lexer import tokenize
 from compiler.syntax import (
@@ -68,6 +69,11 @@ _HEREDOC_REDIRECTS: dict[TokenKind, RedirectOp] = {
     TokenKind.DLESSDASH: RedirectOp.HEREDOC_DASH,
 }
 _REDIRECT_TOKENS = frozenset(_FILE_REDIRECTS) | frozenset(_HEREDOC_REDIRECTS)
+
+# A command substitution inside an opaque expansion: `$(` not followed by a second `(`, which would
+# be nested arithmetic, or a backquote. Matched against the inside of the expansion only, since
+# `$((` at the start of an arithmetic expansion is its own opening, not a substitution.
+_HIDDEN_SUBSTITUTION = re.compile(r"\$\((?!\()|`")
 
 # What each bash-only operator would have meant, for the message the agent sees.
 _BASH_ONLY_MEANING: dict[TokenKind, str] = {
@@ -427,8 +433,8 @@ class _Parser:
                 part = dataclasses.replace(
                     part, parts=self._parse_substitutions(part.parts, part.raw, part_pos)
                 )
-            elif part.kind in (PartKind.PARAM_EXP, PartKind.ARITH_EXP) and (
-                "$(" in part.raw or "`" in part.raw
+            elif part.kind in (PartKind.PARAM_EXP, PartKind.ARITH_EXP) and _HIDDEN_SUBSTITUTION.search(
+                part.raw[3:-2] if part.kind is PartKind.ARITH_EXP else part.raw[1:]
             ):
                 # The lexer keeps `${x:-...}` operator forms and `$((...))` as opaque parts, so a
                 # substitution inside one would run without ever appearing in the AST. Refuse,
