@@ -75,9 +75,11 @@ A path on its own means little; what matters is the region it falls in. Zones ar
 
 ### The zone of a bounded set
 
-A `KNOWN` target falls in exactly one zone. A `BOUNDED(dir)` target covers a whole subtree, so it falls in **every zone that subtree contains**, and the policy must take the most severe of them. This is a join over the zone lattice, and getting it backwards is a bypass rather than a cosmetic error.
+A `KNOWN` target falls in exactly one zone. A `BOUNDED(dir)` target covers a whole subtree, so it falls in **every zone that subtree contains**, and the policy must decide the effect once for each of those zones and keep the strictest verdict. Getting this backwards is a bypass rather than a cosmetic error.
 
-The case that makes it concrete: `BOUNDED(~)` looks like `HOME`, but `~/.ssh` is under it, so the set includes `SECRET` and a read of it must be denied. That is what stops `grep -r password ~` and `rm -rf ~/*`. Operationally: a bounded set's zone is the join of the zone of `dir` itself and the zones of every zone root at or under `dir`. Since the zone roots are a short fixed list, this is a loop over that list asking whether each is a descendant of `dir`.
+There is deliberately no severity order on zones themselves, and an earlier version of this section was wrong to describe one. Whether a zone is dangerous depends on what is done there: reading `SYSTEM` is allowed while writing it is denied, so no single ranking of zones can say which of two is worse. The order lives on verdicts, `ALLOW < ESCALATE < DENY`, and the policy computes a verdict for each (kind, zone) pair the target touches and takes their join. This is how `compiler/types.py` declares `Zone`.
+
+The case that makes it concrete: `BOUNDED(~)` looks like `HOME`, but `~/.ssh` is under it, so the set includes `SECRET` and a read of it must be denied. That is what stops `grep -r password ~` and `rm -rf ~/*`. Operationally: the zones a bounded set touches are the zone of `dir` itself plus the zone of every zone root at or under `dir`. Since the zone roots are a short fixed list, finding them is a loop over that list asking whether each is a descendant of `dir`; the policy then decides the effect in each of those zones and takes the strictest result.
 
 **Containment is textual, not symlink-aware.** `BOUNDED(dir)` claims that every path *as written* lies under `dir`; it does not claim the inodes do, because a symlink inside `dir` can point anywhere and we do not touch the filesystem during analysis. That is a real limit and it belongs in the threat model's residual risks beside the time-of-check gap, not hidden here.
 
