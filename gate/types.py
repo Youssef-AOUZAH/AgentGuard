@@ -80,11 +80,12 @@ class Approver(Protocol):
 
 
 class MessageLevel(StrEnum):
-    """How much a refusal tells the agent. Gate hypothesis H1 compares these; `RULE` is the
-    recommended default (`docs/decisions.md`, "What does a rejection tell the agent?")."""
+    """How much a refusal tells the agent. `GENERIC` is the decided default and the only level
+    for real use (`docs/decisions.md`, "What does a rejection tell the agent?"); the other two
+    exist only so gate hypothesis H1 can measure what a more informative message changes."""
 
-    GENERIC = "generic"  # that it was refused, nothing else
-    RULE = "rule"  # the rule id and name, and the kind of effect and its zone
+    GENERIC = "generic"  # "Command refused based on user rules." and nothing else
+    RULE = "rule"  # experiment only: the rule id and name, and the kind of effect
     DETAILED = "detailed"  # also the target and the part of the command responsible
 
 

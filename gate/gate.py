@@ -66,7 +66,7 @@ class Gate:
         analyzer: Analyzer | None = None,
         classifier: RetryClassifier | None = None,
         approver: Approver | None = None,
-        level: MessageLevel = MessageLevel.RULE,
+        level: MessageLevel = MessageLevel.GENERIC,
     ) -> None:
         self.executor = executor
         self.session = Session(state)

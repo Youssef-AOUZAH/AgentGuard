@@ -20,7 +20,7 @@ Owning a piece means you write its code, its tests and its entries in the area's
 ## Area 1: Compiler
 
 - **1a. Front end (Youssef).** Four deliverables. (i) The **lexer** for the bash subset in `compiler/grammar.md`: quoting and escapes, token recognition, here-documents, the bash-only operators. *Done.* (ii) The **AST node set** in `compiler/syntax.py`, which is the seam the resolver consumes, so it is agreed with Younes before the parser is written. (iii) The **parser**: simple commands, pipelines, lists (`&&`, `||`, `;`), redirections, subshells, assignments, the POSIX parser-lexer interaction rules, and a named diagnostic for every construct the grammar rejects. (iv) The **canonical emitter** in `compiler/emit.py`, which re-serialises the AST into the command the gate actually executes. Compare against `bash -n` and the argv oracle in tests.
-Not yet assigned, and deliberately left open until we agree: the **policy DSL's lexer and parser** (see `docs/decisions.md`). The policy language belongs to 1b by area, but its front end is the same kind of work as 1a.
+Also Youssef's, decided 23 November 2026: the **policy language's lexer and parser**, producing the policy AST in `compiler/policy_syntax.py`. Younes writes the evaluator (`compiler/policy.py`) against it, and the language is designed together. See `docs/decisions.md`.
 
 - **1b. Middle end (Younes).** Resolve words the way bash would (quote removal, escapes, known variables, `$'...'`, brace expansion where static), mark dynamic parts UNRESOLVED, then compute effects per command with a knowledge table of common tools, and evaluate the declarative policy in `policies/`.
 
@@ -71,12 +71,14 @@ Also built, by Youssef:
 
 **Blocked, do not start yet:**
 
-- `compiler/policy.py` needs both `types.py` and a decision on the policy language's syntax.
+- `compiler/policy.py` (Younes) needs the policy AST in `compiler/policy_syntax.py`, which Youssef writes first. The language's shape is decided in `docs/decisions.md`; the AST is agreed between the two of us before either side is coded.
 - The classifier dataset (`classifier/`, piece 2b) can now be serialised, since `Decision` and `ClassifierInput` exist, but its *contents* need real refusals: the rule ids and effects in each record come from the policy engine, so the dataset waits for `compiler/policy.py`. See `docs/interfaces.md` §S6.
 
-**Open questions that an agent must not answer on its own.** Four entries under "Open" in `docs/decisions.md` are decisions for the two of us, not defaults to be picked: who writes the policy DSL's front end, who converts sandbox observations into effects, the policy language's syntax, and what a rejection message tells the agent. **Each now carries a recommendation from Youssef (23 November 2026), marked "open until Younes agrees".** An agent working for Younes should show him those four recommendations and let him accept, change or reject each; it must not treat a recommendation as decided, and must not build `compiler/policy.py` or the policy parser until he has. Once he agrees, move the entry from "Open" to "Decided" in the same pull request.
+**Decided on 23 November 2026, by Youssef.** The four questions that were open are now under "Decided" in `docs/decisions.md`: a refused command tells the agent only "Command refused based on user rules.", with no rule, effect or reason; the executor (Youssef) turns sandbox observations into effects; Youssef writes the policy language's lexer and parser and Younes its evaluator; and the policy language is our own order-free DSL whose rules cite rule ids and carry their own tests. Younes: if you disagree with any of them, raise it in an issue rather than coding around it.
 
-Two smaller items are owed to Younes's code by the gate, and need his call: `Reason` has no zone, so the rule-level message cannot name the zone the recommendation asks for (`gate/message.py`); and a rule id for backgrounded commands (from the PR #3 review).
+**Open questions that an agent must not answer on its own** are the entries still under "Open" in `docs/decisions.md`. If a task runs into one, stop and leave it to the humans rather than choosing and proceeding.
+
+One smaller item is owed to Younes's code by the gate: `RULE_NAMES` in `gate/message.py` needs R11 once PR #4 is merged. The zone in `Reason` (issue #5) is no longer needed for messages, since refusals no longer name anything.
 
 ## Order of work
 

@@ -34,7 +34,7 @@ from compiler.types import (
 )
 from gate.executor import TempDirExecutor
 from gate.gate import Gate
-from gate.message import INTERNAL_ERROR, render
+from gate.message import INTERNAL_ERROR, REFUSED, render
 from gate.types import MessageLevel
 
 pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
@@ -111,7 +111,7 @@ def test_escalate_without_an_approver_is_refused(box):
     outcome = gate.submit("touch x")
     assert outcome.verdict is Verdict.DENY
     assert outcome.decision.verdict is Verdict.ESCALATE
-    assert "approval" in outcome.message
+    assert outcome.message == REFUSED  # not even that approval was needed
     assert not box.real_path(ws(box, "x")).exists()
 
 
@@ -371,7 +371,9 @@ def test_classifier_failure_escalates(box):
 def test_message_levels():
     effect = Effect(EffectKind.DELETE, PurePosixPath("/home/u/.ssh"), Known(), Script((), ""))
     decision = Decision(Verdict.DENY, (Reason(RuleId.R4, effect, "zone secret"),))
-    assert render(Verdict.DENY, decision, MessageLevel.GENERIC) == "agentGuard refused this command."
+    assert render(Verdict.DENY, decision, MessageLevel.GENERIC) == REFUSED
+    escalated = Decision(Verdict.ESCALATE, (Reason(RuleId.R10, effect),))
+    assert render(Verdict.DENY, escalated, MessageLevel.GENERIC) == REFUSED
     rule = render(Verdict.DENY, decision, MessageLevel.RULE)
     assert "R4 (path containment): delete" in rule and ".ssh" not in rule and "zone" not in rule
     detailed = render(Verdict.DENY, decision, MessageLevel.DETAILED)
@@ -379,8 +381,23 @@ def test_message_levels():
     assert render(Verdict.ALLOW, Decision(Verdict.ALLOW), MessageLevel.DETAILED) == ""
 
 
-def test_r1_detail_is_shown_at_rule_level(box):
-    outcome = make_gate(box).submit("if true; then :; fi")
+def test_every_refusal_reads_the_same_by_default(box):
+    class Broken:
+        def analyze(self, script, state):
+            raise KeyError("boom")
+
+    gate = make_gate(box, analyzer=TableAnalyzer({"touch a": deny(detail="zone secret")}))
+    messages = {
+        gate.submit("if true; then :; fi").message,  # unparseable
+        gate.submit("touch a").message,  # denied by a rule
+        make_gate(box, analyzer=Broken()).submit("true").message,  # internal failure
+        Gate(box, box.initial_state()).submit("true").message,  # escalated, nobody to approve
+    }
+    assert messages == {"Command refused based on user rules."}
+
+
+def test_r1_detail_is_shown_at_rule_level_for_experiments(box):
+    outcome = make_gate(box, level=MessageLevel.RULE).submit("if true; then :; fi")
     assert "R1 (unparseable)" in outcome.message and "control-structure" in outcome.message
 
 

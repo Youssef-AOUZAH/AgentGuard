@@ -120,7 +120,7 @@ Four setups, compared on the same corpora: (1) string denylist baseline, (2) com
 
 Metrics: workaround success rate (an effect the policy forbids still happens, measured in the sandbox), false-rejection rate on benign developer tasks, classifier probability calibration, and latency per command. The bypass corpus covers quoting and expansion tricks, encoded payloads, alternative tools with the same effect, and multi-step workarounds across rejections.
 
-Open design question to settle early and record in `docs/`: what does the rejection message tell the agent? A detailed reason helps legitimate retries but teaches the agent how to probe; a generic message does the opposite. This is one of our hypotheses (gate H1).
+Decided (`docs/decisions.md`): a refused command tells the agent only "Command refused based on user rules.", never which rule, effect or reason. The more informative message levels in `gate/message.py` exist only for gate H1, which measures whether a more informative message changes agent behaviour; they are never used outside that experiment.
 
 ## Starting hypotheses
 

@@ -1,27 +1,30 @@
 """The message a refused command returns to the agent.
 
 Takes in the final verdict, the decision behind it and a `MessageLevel`, and returns one fixed
-piece of text. What the message should say is gate hypothesis H1, so the three levels exist to be
-compared, and the wording at each level is fixed rather than varied, so that the classifier's
-dataset is not confounded by message wording (`docs/decisions.md`, "What does a rejection tell
-the agent?").
+piece of text.
 
-- `GENERIC`: that the command was refused, and whether a human could have approved it.
-- `RULE`: also, for each cited rule, its id and name and the kind of effect it fired on. For R1
-  the detail is the diagnostic, which describes the construct, not the policy.
+**Decided (`docs/decisions.md`, "What does a rejection tell the agent?"): the agent is told that
+the command was refused under the user's rules, and nothing else.** Every refusal, whatever caused
+it (a denying rule, an escalation nobody approved, a command we could not parse, an internal
+failure), gets the same sentence, `REFUSED`. Any difference between refusals would tell the agent
+something about where the boundary is or why it was hit, and the point is to tell it nothing it can
+probe with. `GENERIC` is the default and the only level for real use.
+
+`RULE` and `DETAILED` remain for one purpose: gate hypothesis H1 measures how much a more
+informative message changes what an agent does next, and that needs the informative messages to
+exist. They are experiment settings, never a deployment option.
+
+- `RULE`: for each cited rule, its id and name and the kind of effect it fired on. For R1 the
+  detail is the diagnostic, which describes the construct, not the policy.
 - `DETAILED`: also the target of each effect and the policy's own detail text.
-
-No level ever states the policy itself or what would have been allowed instead.
-
-Deliberately not handled: the zone at the `RULE` level, which the recommendation in
-`docs/decisions.md` wants but which `Reason` does not yet carry (zones are computed by the policy
-engine, and adding a field to `compiler/types.py` is Younes's call).
 """
 
 from __future__ import annotations
 
 from compiler.types import Decision, Reason, RuleId, Verdict
 from gate.types import MessageLevel
+
+REFUSED = "Command refused based on user rules."
 
 RULE_NAMES: dict[RuleId, str] = {
     RuleId.R1: "unparseable",
@@ -38,24 +41,21 @@ RULE_NAMES: dict[RuleId, str] = {
 
 MAX_REASONS = 5
 
-INTERNAL_ERROR = "agentGuard refused this command: it could not be analysed."
+# Kept as its own name so callers can say what they mean; the text is the same on purpose.
+INTERNAL_ERROR = REFUSED
 
 
 def render(verdict: Verdict, decision: Decision, level: MessageLevel) -> str:
     """The text for a command with this final verdict. Empty for a command that was allowed."""
     if verdict is Verdict.ALLOW:
         return ""
-    if decision.verdict is Verdict.ESCALATE:
-        head = "agentGuard refused this command: it needs a human's approval, and none was given"
-    else:
-        head = "agentGuard refused this command"
     if level is MessageLevel.GENERIC or not decision.reasons:
-        return head + "."
+        return REFUSED
     lines = list(dict.fromkeys(_line(reason, level) for reason in decision.reasons))
     shown = lines[:MAX_REASONS]
     if len(lines) > MAX_REASONS:
         shown.append(f"and {len(lines) - MAX_REASONS} more")
-    return head + ":\n" + "\n".join(f"- {line}" for line in shown)
+    return REFUSED + "\n" + "\n".join(f"- {line}" for line in shown)
 
 
 def _line(reason: Reason, level: MessageLevel) -> str:
