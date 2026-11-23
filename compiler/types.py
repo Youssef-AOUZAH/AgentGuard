@@ -17,6 +17,8 @@ cannot exist rather than relying on every consumer to check:
   `pathlib` is textual: `PurePosixPath("/ws/../etc").is_relative_to("/ws")` is True.
 - A `BOUNDED` resolution always bounds a directory, and an `UNKNOWN` one has no target and a
   stated reason.
+- A file effect (read, write, append, delete, chdir) names a path unless it is `UNKNOWN`, so
+  every one of them can be zoned. No effect is a `MOVE`: a move is a delete plus a write.
 - A `DENY` decision always cites at least one rule.
 - `ABSTAIN` does not exist at this seam. The policy engine may use it internally, but it turns
   total abstention into `ESCALATE` before returning (`docs/interfaces.md` S5).
@@ -45,9 +47,13 @@ from compiler.syntax import Node, Word
 class EffectKind(StrEnum):
     """One thing a command would do. A command usually has several effects.
 
-    `MOVE` is a `DELETE` of the source plus a `WRITE` of the destination; the effect analysis
-    may emit either form. `INTERPRET` is distinct from `EXEC` on purpose: `python file.py` runs
-    a program by name, `python -c '...'` runs code we would have to parse in another language.
+    `MOVE` names what `mv` does, so the knowledge table can say it, but no `Effect` carries it:
+    a move is always emitted as `DELETE(source)` plus `WRITE(destination)`. With a single target
+    a move could only cite one of its two paths, and `mv ~/.ssh/id_rsa ./x` on its destination
+    alone looks like a workspace write that hides the removal of a secret.
+
+    `INTERPRET` is distinct from `EXEC` on purpose: `python file.py` runs a program by name,
+    `python -c '...'` runs code we would have to parse in another language.
     """
 
     READ = "read"
@@ -66,18 +72,20 @@ class EffectKind(StrEnum):
     UNKNOWN = "unknown"  # the command head is not in the knowledge table
 
 
-# Kinds whose target, when there is one, is a filesystem path.
-PATH_KINDS: frozenset[EffectKind] = frozenset(
+# Kinds that act on a file, and so must name the path they act on unless it is Unknown.
+FILE_KINDS: frozenset[EffectKind] = frozenset(
     {
         EffectKind.READ,
         EffectKind.WRITE,
         EffectKind.APPEND,
         EffectKind.DELETE,
-        EffectKind.MOVE,
         EffectKind.CHDIR,
-        EffectKind.PRIV_CHANGE,
     }
 )
+
+# Kinds whose target, when there is one, is a filesystem path. PRIV_CHANGE is here but not in
+# FILE_KINDS: `chmod f` has a path, `sudo` has none, and R5 denies every PRIV_CHANGE either way.
+PATH_KINDS: frozenset[EffectKind] = FILE_KINDS | {EffectKind.PRIV_CHANGE}
 
 # Kinds that change or remove data, and so are denied by R2 when their target is UNKNOWN.
 DESTRUCTIVE_KINDS: frozenset[EffectKind] = frozenset(
@@ -85,7 +93,6 @@ DESTRUCTIVE_KINDS: frozenset[EffectKind] = frozenset(
         EffectKind.WRITE,
         EffectKind.APPEND,
         EffectKind.DELETE,
-        EffectKind.MOVE,
         EffectKind.PRIV_CHANGE,
     }
 )
@@ -219,12 +226,17 @@ class Effect:
     origin: Node | Word
 
     def __post_init__(self) -> None:
+        if self.kind is EffectKind.MOVE:
+            raise ValueError("emit a move as DELETE of the source plus WRITE of the destination")
         if isinstance(self.resolution, Unknown):
             if self.target is not None:
                 raise ValueError("an Unknown effect has no target; say why in the reason")
             return
         if isinstance(self.resolution, Bounded) and not isinstance(self.target, PurePosixPath):
             raise ValueError("a Bounded effect must bound a directory path")
+        if self.kind in FILE_KINDS and not isinstance(self.target, PurePosixPath):
+            # Without a path there is no zone, so R4 could not see the effect at all.
+            raise ValueError(f"a {self.kind} effect needs a path target, or an Unknown resolution")
         if isinstance(self.target, PurePosixPath):
             _check_absolute_path(self.target)
 
@@ -295,13 +307,16 @@ class RuleId(StrEnum):
     R8 = "R8"  # self-protection
     R9 = "R9"  # retry of a denied effect
     R10 = "R10"  # unknown head
+    R11 = "R11"  # backgrounded command
 
 
 @dataclass(frozen=True, slots=True)
 class Reason:
     """Why a verdict was reached: the rule that fired, the effect it fired on, and a short
-    human-readable detail. `effect` is None only when there is no effect to cite, as for R1,
-    where the command never parsed and `detail` carries the diagnostic code instead."""
+    human-readable detail. `effect` is None when there is no single effect to cite: for R1, where
+    the command never parsed and `detail` carries the diagnostic code; for R11, which fires on
+    the `&` separator rather than on anything the command does; and for an R9 retry judged on
+    the whole command."""
 
     rule: RuleId
     effect: Effect | None

@@ -37,6 +37,7 @@ RULE_NAMES: dict[RuleId, str] = {
     RuleId.R8: "self-protection",
     RuleId.R9: "retry of a denied effect",
     RuleId.R10: "unknown command",
+    RuleId.R11: "backgrounded command",
 }
 
 MAX_REASONS = 5
