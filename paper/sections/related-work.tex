@@ -1,0 +1,76 @@
+% Owner: Youssef. Source: docs/related-work.md, which records how well each claim was verified.
+% Every \checkcite marks a claim not yet read in the cited source itself; read it and remove the
+% marker, or cut the claim, before submission.
+\section{Related Work}\label{sec:related}
+
+\paragraph{Pre-execution command guards.}
+The closest published work is CARE~\cite{care}, which verifies each shell command before the
+host shell runs it. It canonicalises the command with a bounded, deterministic rewrite that
+unwraps wrapper shells and normalises quoting, then scores it in four static layers (structural
+indicators, a risk class per command head, the sensitivity of the paths it names, and a catalogue
+of regular-expression rules weighted by provenance) and consults a language-model judge only for
+commands whose score falls in an uncertain band. It reports 85.64\% F1 at a 0.91\%
+false-positive rate\checkcite{CARE results table}. Two of its findings shape our design. On one
+attack set, the static profile alone reduced realised harm more than the full system with the
+judge, apparently because the judge moved dangerous borderline cases to allow%
+\checkcite{CARE, RedCode-gen comparison}; our classifier is therefore allowed only to tighten a
+verdict. And CARE states that its mediation is stateless, each decision made over a single
+command in isolation, naming trajectory-level reasoning as future work. Our design differs from
+CARE in three respects: it compiles to effects over a grammar we specify rather than scoring a
+normalised string, it resolves paths against session state, and it executes its own canonical
+output rather than the agent's command.
+
+The open-source guards share one trait that matters here: none writes its own shell grammar.
+CARE parses with bashlex, bashguard~\cite{bashguard} with tree-sitter-bash, and others with
+unnamed parsers whose coverage their authors describe only as finite. bashguard separates
+evidence from decision, emitting findings with an action type that a policy then turns into a
+verdict, and it ratchets: a project configuration may tighten its verdicts but never relax them.
+cc-bash-guard~\cite{cc-bash-guard} has the most developed policy language of the group, with
+deny, ask and allow buckets, an explicit \emph{abstain} when no rule has an opinion, and a test
+block required on every rule that a verifier runs before the policy is accepted. We adopt the
+ratchet and the per-rule tests. What none of these tools does is publish the language it
+accepts, treat everything outside that language as a refusal, or carry the quoting of each word
+through to the decision instead of normalising it away.
+
+\paragraph{Why string filters fail.}
+The GuardFall disclosure~\cite{guardfall} attributes the failure of agents' command filters to
+inspecting a string before the shell expands it, which is the parser-differential problem in
+its plainest form. CmdNeedle~\cite{cmdneedle} shows the same fragility from the other side, using
+a language model to propose bypasses and validating each by its side effects in a sandbox, a
+method we reuse to build our bypass corpus. \emph{Don't Let AI Agents YOLO Your
+Files}~\cite{yolo} names the \emph{shell loophole}: commands run through the shell escape the
+policies an agent harness applies to its own file tools, and the paper argues for filtering on
+filesystem effects rather than on command strings, which is the premise of our design.
+Red-teaming work~\cite{redteam-agentic} argues that enforcement must be non-bypassable by the
+agent it constrains, which motivates our rule protecting the gate's own files.
+
+\paragraph{Agent behaviour after a refusal.}
+The survey of Dantas et al.~\cite{survey-safe-agents} frames agent safety as specification,
+verification and enforcement, and lists the verifier tax among its priority open problems.
+\emph{Permission Denied}~\cite{permission-denied} measures post-denial behaviour directly,
+evaluating twelve coding agents under nested system-level restrictions and finding that
+harnesses which retry aggressively waste effort on denied actions while those that change
+strategy keep their success rate\checkcite{beyond the abstract, from secondary coverage}. Its
+agents meet raw operating-system errors. A gate that refuses before execution can instead explain
+the refusal, and whether the content of that explanation changes what the agent does next appears
+to be untested; it is one of our experiments. AgentGuard~\cite{agentguard-trajectories}, which
+shares our name by coincidence, learns behavioural rules from failed agent trajectories and
+injects them into the agent's context, reporting over-refusal as its main limitation. It
+\emph{advises} the agent where we \emph{enforce} at the point of execution, and advice can be
+ignored. ClawGuard~\cite{clawguard} addresses indirect prompt injection in tool-using agents at
+runtime and is adjacent rather than overlapping.
+
+\paragraph{The shell as a language.}
+Our grammar work is not novel in itself, and the shell literature is where the comparison
+belongs. Smoosh~\cite{smoosh} gives an executable formal semantics of the POSIX shell, tested
+against the standard's conformance suite, and Morbig~\cite{morbig} is a static parser for POSIX
+shell written for fidelity to the specification and used to analyse Debian maintainer scripts
+at scale. Both are candidate oracles for our differential tests, alongside bash itself. PaSh
+\cite{pash} annotates commands with their inputs and outputs in order to parallelise scripts,
+which is prior art for our table of command effects. Shill~\cite{shill} lets a script declare the
+capabilities it needs, prior art for policies over what a command may touch. And try~\cite{try}
+runs a command in an overlay and shows its filesystem changes before committing them, the
+dynamic counterpart of predicting effects statically and a natural baseline. What we take from
+this literature is the discipline of specifying the language; what we add is applying it at the
+boundary between an agent and the shell, where everything outside the specification is a
+refusal.

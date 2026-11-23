@@ -1,0 +1,58 @@
+% agentGuard: the final report.
+% Build with `latexmk -pdf main.tex` from this folder.
+%
+% Section owners (TEAM.md, "Shared work"): introduction and related work, Youssef;
+% design, evaluation and discussion, Younes. Every number in this paper must carry a run_id
+% from a hypotheses.md entry (AGENTS.md); every number taken from another paper must be checked
+% against that paper's own text before submission and its \checkcite marker removed.
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage[nameinlink]{cleveref}
+
+\hypersetup{colorlinks=true, linkcolor=black, citecolor=black, urlcolor=blue}
+
+% A figure or claim from another paper that we have not yet read in the original. Renders as a
+% red marker while drafting; set \finaltrue to check that none remain (they then fail the build).
+\newif\iffinal
+\finalfalse
+\newcommand{\checkcite}[1]{\iffinal\errmessage{Unchecked citation: #1}\else\textcolor{red}{\textsuperscript{[check: #1]}}\fi}
+
+\newcommand{\cmd}[1]{\texttt{#1}}
+\newcommand{\sys}{\textsc{agentGuard}}
+
+\title{\sys: Compiling Agent Shell Commands to Effects Before They Run}
+\author{Youssef Aouzah \and Younes Menfalouti\\[2pt]
+  \small College of Computing, Mohammed VI Polytechnic University}
+\date{Draft}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+To be written last, from the results.
+\end{abstract}
+
+\input{sections/introduction}
+\input{sections/related-work}
+
+\section{Design}\label{sec:design}
+Younes drafts this section.
+
+\section{Evaluation}\label{sec:evaluation}
+Younes drafts this section.
+
+\section{Discussion and Limitations}\label{sec:discussion}
+Younes drafts this section.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

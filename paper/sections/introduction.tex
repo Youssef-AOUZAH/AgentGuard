@@ -1,0 +1,83 @@
+% Owner: Youssef. Sources: AGENTS.md (problem, idea), docs/threat-model.md (adversary, claim),
+% docs/related-work.md section 3 (the narrowed contributions).
+\section{Introduction}\label{sec:intro}
+
+Coding agents now run shell commands on developers' machines. Given broad permissions, an agent
+built on a large language model will install packages, delete build directories, rewrite
+configuration and push to remote repositories, issuing each step as a line of shell. The
+safeguard most agents ship is a list of forbidden command strings: block \cmd{rm -rf}, ask
+before \cmd{sudo}. Such a list inspects the text of a command before the shell has read it, and
+the shell is a language in which one effect can be written in many ways. The same deletion is
+\cmd{rm -r dir}, \cmd{find dir -delete}, a Python one-liner, a base64 payload piped to \cmd{sh},
+or \cmd{rm} spelled with quotes the shell removes and the filter does not. An industry study of
+eleven open-source coding agents found that quoting and expansion tricks of this kind defeated
+the command filters of ten of them, and that the one which held tokenised commands the way bash
+itself does~\cite{guardfall}\checkcite{industry note, not peer reviewed}.
+
+Evasion by a deliberate attacker is only half of the problem. The other half is that a refusal
+does not end the interaction. An agent has a task, the obvious command was refused, and it
+reaches for the next way to finish the job: \cmd{rm} is refused, so it tries \cmd{find -delete}.
+A recent survey of agent safety calls the cost of this the \emph{verifier tax}, reporting one
+study in which blocking 94\% of unsafe actions still left under 5\% of tasks completed both
+safely and correctly, because the agents found other unsafe routes~\cite{survey-safe-agents}%
+\checkcite{abstract only; the survey rates this evidence as very low quality}. A guard that
+judges each command in isolation cannot see this pattern at all, because every command in it
+looks new.
+
+We treat the problem as one of compilation. \sys{} sits between the agent and the shell and
+compiles each command line, as a program in a precisely specified subset of bash, into the set of
+effects it would have: the files it would read, write or delete, the hosts it would contact, the
+programs it would hand code to, the privileges it would change. A policy is then written over
+those effects and the regions of the filesystem they fall in, not over strings, so the many
+spellings of one deletion meet the same rule. The compiler has the usual phases. A lexer records,
+for every piece of every word, how it was quoted and whether its value is known from the source
+alone. A recursive-descent parser builds a syntax tree for the accepted language, parsing command
+substitutions recursively rather than treating them as opaque. A resolver and an effect analysis
+turn words into paths, using a session state that remembers the working directory and the
+variables earlier commands set. And an emitter, the code-generation phase, writes the analysed
+tree back out as a canonical command line, which is what the gate executes instead of the agent's
+original text. Whatever our reading of a command, the shell runs the command we read.
+
+Around the compiler sit two further components. A zero-shot classifier, built on an open-weight
+natural language inference model, compares each command that follows a refusal with the command
+that was refused and judges whether it pursues the same effect by other means. It may only
+tighten a verdict, never loosen one. And a gate runs the whole pipeline for each command, tells
+the agent why a command was refused, and executes allowed commands inside a disposable sandbox
+that also records what they changed.
+
+The research question is whether an effect-based compiler with a retry-aware classifier stops
+agent workarounds better than a string denylist, at an acceptable rate of false refusals on
+benign developer tasks. Our primary adversary is the over-eager agent described above, one that
+pursues its task past a refusal without concealing what it does. Against an agent following
+injected instructions, only the compiler's structural analysis holds, and we do not claim
+otherwise for the classifier.
+
+This paper makes three contributions.
+\begin{enumerate}
+  \item \textbf{A specified command language with quoting provenance and canonical emission.}
+    We publish the subset of bash we accept, as a grammar, and refuse everything outside it
+    with a named diagnostic. Every piece of every word carries how it was written, so a value
+    that depends on the environment is marked unknown rather than guessed, and the command that
+    runs is our re-serialisation of the tree we checked. To our knowledge no agent command guard
+    states the language it accepts, and none executes its own output.
+  \item \textbf{An effect-and-zone policy with bounded path sets and session state.} Targets
+    are resolved to an exact path, a directory bounding every path touched, or unknown, which
+    separates \cmd{rm -rf build} inside the workspace from \cmd{find / -delete} without refusing
+    both. Paths are resolved against the session's working directory, so a \cmd{cd} out of the
+    workspace followed by a relative read is not invisible, as it is to a guard that judges
+    each command alone.
+  \item \textbf{A study of agent behaviour after a refusal}, measuring how often agents work
+    around a refused effect, whether the history of refusals helps detect it, and whether what
+    the refusal message says changes what the agent does next.
+\end{enumerate}
+
+The guarantee we claim is deliberately narrow. For every command the gate allows, the direct
+effects of the pinned version of bash evaluating that command line are within policy, provided
+the entries of our table of command effects are correct and the filesystem does not change
+between the check and the execution. We do not claim to follow effects through programs the
+agent writes and later runs, to cover agent tools other than the shell, or to protect the
+workspace from the agent it was given to.
+
+\Cref{sec:related} places this work among command guards for agents and the formal study of the
+shell. \Cref{sec:design} presents the design, \cref{sec:evaluation} the evaluation, and
+\cref{sec:discussion} its limits.
