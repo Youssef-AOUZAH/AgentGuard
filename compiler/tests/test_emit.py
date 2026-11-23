@@ -37,7 +37,10 @@ from compiler.syntax import (
     simple_commands,
 )
 
-needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
+# Resolved through PATH: Windows looks in System32 (the WSL launcher) before PATH when a
+# program is started by bare name, which would run a different bash from the one we test against.
+BASH = shutil.which("bash")
+needs_bash = pytest.mark.skipif(BASH is None, reason="bash is not installed")
 
 
 def canonical(src: str) -> str:
@@ -358,7 +361,7 @@ def _bash_argv(word: str, cwd) -> list[bytes]:
     `subprocess` rewrites backslashes in arguments under the MS C runtime rules."""
     script = "HOME=/h; OLDPWD=/old; x='a  b'; e=; set -- p 'q r'; printf '%s\\0' " + word
     out = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-s"],
+        [BASH, "--noprofile", "--norc", "-s"],
         input=script.encode(),
         capture_output=True,
         check=True,
@@ -404,7 +407,7 @@ _COMMANDS = [
 
 def _bash_parses(src: str) -> bool:
     result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-n"],
+        [BASH, "--noprofile", "--norc", "-n"],
         input=src.encode(),
         capture_output=True,
         check=False,

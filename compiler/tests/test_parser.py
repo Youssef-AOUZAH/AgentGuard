@@ -27,6 +27,10 @@ from compiler.syntax import (
     walk,
 )
 
+# Resolved through PATH: Windows looks in System32 (the WSL launcher) before PATH when a
+# program is started by bare name, which would run a different bash from the one we test against.
+BASH = shutil.which("bash")
+
 
 def refused(src: str) -> Diag:
     with pytest.raises(ParseError) as excinfo:
@@ -517,7 +521,7 @@ def _bash_accepts(src: str) -> bool:
     backslashes under the MS C runtime quoting rules, which corrupts exactly the inputs under test.
     """
     result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-n"],
+        [BASH, "--noprofile", "--norc", "-n"],
         input=src.encode(),
         capture_output=True,
         check=False,
@@ -525,7 +529,7 @@ def _bash_accepts(src: str) -> bool:
     return result.returncode == 0
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
+@pytest.mark.skipif(BASH is None, reason="bash is not installed")
 @pytest.mark.parametrize("src", _DIFFERENTIAL_CORPUS)
 def test_agrees_with_bash_n(src):
     """If bash rejects and we accept, that is a bug. If bash accepts and we reject, the
