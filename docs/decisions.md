@@ -54,6 +54,12 @@ Correction to how we argue this. "No API key" does **not** distinguish us from C
 - **No machine-specific paths in the file.** The workspace and home are bound by the gate from `SessionState`, and the sketch's `workspace "/home/youssef/project"` line goes. The file defines zones by pattern relative to those roots, `zone secret ["~/.ssh", "~/.aws", "**/.env"]`, so one file works on both our machines and in the sandbox.
 - **Tests live in the file**, as in cc-bash-guard: `expect deny "rm -rf ~"`. Loading a policy runs them, and a failing expectation, or an `allow` on an interpreter, refuses to load the policy.
 
+**Three details of the policy language, settled with its front end.** Decided by Youssef, 23 November 2026, when the front end was built; the evaluator must follow them.
+
+- **Which zone a path is in, when patterns overlap:** the first match in the order secret, device, workspace, temp, system, home, outside. A `.env` inside the workspace is secret. The workspace comes before temp and home because a workspace may live under either (ours does, in the sandbox). This order classifies paths; it does not rank zones, so it does not contradict the decision that verdicts, not zones, are ordered.
+- **Anywhere-patterns count for bounded targets.** A bounded target is decided for every zone its subtree can touch, `**/.env` included, so `grep -r x .` touches `secret`. This is the sound choice; a policy that finds it too strict writes the exception itself with `target bounded` or `target known`, where a reviewer can see it.
+- **The language offers both `repeats denied target` and `repeats denied zone`.** Which one the default policy should use is the R9 research question, so the language does not choose; `policies/default.pol` starts with `zone`, the stricter.
+
 ## Deferred
 
 **CI guard script.** The hard rules in `AGENTS.md` (the compiler never executes what it analyzes, no committed secrets or data, corpus entries are data not scripts) are prose only; nothing enforces them. The plan is a Python script in `.github/scripts/` run as a CI step, using the `ast` module to reject `eval`, `exec`, `subprocess` and friends in `compiler/` and `classifier/` while exempting `gate/`, whose sandboxed executor legitimately needs them. Deferred until there is code for it to check.

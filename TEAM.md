@@ -54,6 +54,7 @@ Also built, by Youssef:
 
 - **The gate (3a)** in `gate/`: `gate.py` runs the stages in order and refuses on any failure; `executor.py` runs the emitted command in a throwaway directory and maps what changed into `Effect` records (S8), and `container.py` does the same inside a Docker container with no network, as an unprivileged user, killing anything left running after each command — **use the container for the bypass corpus and agent experiments**, and `put_file` to seed canaries; `session.py` updates `SessionState` from what really happened; `message.py` writes the refusal at one of three levels for gate H1. The middle end plugs in through the `Analyzer` interface in `gate/types.py`. Until `resolve.py`, `effects.py` and `policy.py` exist, the gate uses `PendingMiddleEnd`, which escalates everything, so nothing runs unapproved.
 - **The NLI pipeline (2a)** in `classifier/`: `pipeline.py` (a stub scorer for tests, the zero-shot NLI scorer, thresholds per label) and `calibrate.py` (threshold choice on the development split, ECE, Brier score, reliability bins). `classifier/labels.py` declares the S6 records; **its label set is provisional and is Younes's to replace** (see its docstring).
+- **The policy language front end (1a)**: `compiler/policy_lexer.py`, `compiler/policy_parser.py` (with error recovery: every mistake in one run) and `compiler/policy_check.py`, producing the tree declared in `compiler/policy_syntax.py`; the language is described in `docs/policy-rules.md` §6, and `policies/default.pol` is the shipped policy with its own `expect` tests.
 - **The paper's introduction and related work** in `paper/` (`latexmk -pdf main.tex`). Every claim taken from a paper not yet read in the original carries a red `\checkcite` marker.
 
 **Start now, nothing blocks these:**
@@ -65,13 +66,13 @@ Also built, by Youssef:
 | The knowledge table — the forty command heads | Younes | `docs/policy-rules.md` §2 |
 | `compiler/resolve.py` and `compiler/effects.py` — the parser hands over a `Script`; read the docstrings in `compiler/syntax.py` first | Younes | `docs/interfaces.md` §S2–S4, `docs/policy-rules.md` §1–§2, and the two parser findings at the top of "Open" in `docs/decisions.md`, which this code must handle |
 | The real label set in `classifier/labels.py` — replace the provisional labels, templates, verdicts and `EXCLUSIVE` | Younes | `docs/interfaces.md` §S6; the module docstring says what is provisional |
+| `compiler/policy.py` — the evaluator: load a `.pol` file with `parse_policy`, decide a `Decision` from effects and session state, and run the file's `expect` tests at load | Younes | `compiler/policy_syntax.py` (what the front end guarantees is in its docstring), `docs/policy-rules.md` §5–§7, and the three details at the end of "Decided" in `docs/decisions.md` (zone order, bounded targets, R9) |
 | Wire the middle end into the gate — an `Analyzer` (`gate/types.py`) that calls `resolve`, `effects_of` and `decide` | Younes, once those exist | `gate/gate.py` docstring; `PendingMiddleEnd` is what it replaces |
 
 `compiler/types.py` is in: five of the ten seams in `docs/interfaces.md` are declared in it, and the gate and the classifier already build on it.
 
 **Blocked, do not start yet:**
 
-- `compiler/policy.py` (Younes) needs the policy AST in `compiler/policy_syntax.py`, which Youssef writes first. The language's shape is decided in `docs/decisions.md`; the AST is agreed between the two of us before either side is coded.
 - The classifier dataset (`classifier/`, piece 2b) can now be serialised, since `Decision` and `ClassifierInput` exist, but its *contents* need real refusals: the rule ids and effects in each record come from the policy engine, so the dataset waits for `compiler/policy.py`. See `docs/interfaces.md` §S6.
 
 **Decided on 23 November 2026, by Youssef.** The four questions that were open are now under "Decided" in `docs/decisions.md`: a refused command tells the agent only "Command refused based on user rules.", with no rule, effect or reason; the executor (Youssef) turns sandbox observations into effects; Youssef writes the policy language's lexer and parser and Younes its evaluator; and the policy language is our own order-free DSL whose rules cite rule ids and carry their own tests. Younes: if you disagree with any of them, raise it in an issue rather than coding around it.

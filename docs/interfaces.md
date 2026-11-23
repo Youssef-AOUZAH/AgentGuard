@@ -120,7 +120,7 @@ The seam nobody thinks about until the metric cannot be computed.
 
 `docs/policy-rules.md` §6 sketches a small DSL, and `docs/decisions.md` records that we prefer writing our own over reading YAML because it is a second small compiler and good coursework.
 
-**Decided (23 November 2026):** Youssef writes its lexer and parser, producing a policy AST declared in `compiler/policy_syntax.py`; Younes writes the evaluator in `compiler/policy.py` against that AST. The language's shape — no rule order, rule ids on every line, one construct for combinations within a statement, no machine-specific paths, tests inside the file — is recorded in `docs/decisions.md`. The file extension and location are `policies/*.pol`.
+**Decided (23 November 2026):** Youssef writes its lexer and parser, producing a policy AST declared in `compiler/policy_syntax.py`; Younes writes the evaluator in `compiler/policy.py` against that AST. The language's shape — no rule order, rule ids on every line, one construct for combinations within a statement, no machine-specific paths, tests inside the file — is recorded in `docs/decisions.md`. The file extension and location are `policies/*.pol`. Built: `parse_policy(src) -> PolicyResult` in `compiler/policy_parser.py` returns a checked `PolicyFile` (declared in `compiler/policy_syntax.py`) or every error with its line and column; the language and its grammar are in `docs/policy-rules.md` §6.
 
 ## S10. Results to the paper
 
