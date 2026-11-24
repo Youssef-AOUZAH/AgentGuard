@@ -31,11 +31,11 @@ from compiler.policy_syntax import (
     ProgramIn,
     RepeatBy,
     RepeatsDenied,
-    Resolution,
     StatementHas,
     SubstitutionDepth,
     TargetIn,
     TargetIs,
+    TargetState,
     VariableIn,
     ZoneIs,
 )
@@ -124,9 +124,9 @@ def test_rule_subjects():
         ("zone != workspace", ZoneIs(frozenset({Zone.WORKSPACE}), True, 0)),
         ("zone in [workspace, temp]", ZoneIs(frozenset({Zone.WORKSPACE, Zone.TEMP}), False, 0)),
         ("zone not in [system,]", ZoneIs(frozenset({Zone.SYSTEM}), True, 0)),
-        ("target known", TargetIs(Resolution.KNOWN, False, 0)),
-        ("target not bounded", TargetIs(Resolution.BOUNDED, True, 0)),
-        ("target unknown", TargetIs(Resolution.UNKNOWN, False, 0)),
+        ("target known", TargetIs(TargetState.KNOWN, False, 0)),
+        ("target not bounded", TargetIs(TargetState.BOUNDED, True, 0)),
+        ("target unknown", TargetIs(TargetState.UNKNOWN, False, 0)),
         ("not repeats denied zone", RepeatsDenied(RepeatBy.ZONE, True, 0)),
         ("repeats denied target", RepeatsDenied(RepeatBy.TARGET, False, 0)),
     ],
@@ -340,3 +340,14 @@ def test_lexer_marks_first_token_on_each_line():
         (PolicyTokenKind.STRING, "d", False),
         (PolicyTokenKind.EOF, "", True),
     ]
+
+
+def test_policy_result_holds_a_policy_or_errors_never_both():
+    from compiler.policy_syntax import PolicyError, PolicyResult
+
+    loaded = parse_policy('policy "t" { }').policy
+    error = PolicyError(PolicyDiag.UNEXPECTED_TOKEN, "x", 0, 1, 1)
+    with pytest.raises(ValueError):
+        PolicyResult(loaded, (error,))
+    with pytest.raises(ValueError):
+        PolicyResult(None, ())

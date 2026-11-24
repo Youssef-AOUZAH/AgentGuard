@@ -64,9 +64,8 @@ policy "workspace-confined" {
   R10 allow    exec                     where target known
   R10 escalate unknown
 
-  # R11: a backgrounded command runs at a time we cannot check against. Enable once RuleId.R11
-  # exists in compiler/types.py (pull request #4).
-  # R11 deny     command                  where background
+  # R11: a backgrounded command runs at a time we cannot check against.
+  R11 deny     command                  where background
 
   expect allow     "ls -la"
   expect deny  R4  "cd ~/Desktop"
@@ -86,4 +85,6 @@ policy "workspace-confined" {
   expect deny  R3  "python -c \"import os; os.remove('x')\""
   expect escalate R10 "somebinary --flag"
   expect allow     "cat notes.txt" after "cd ~/Desktop"
+  expect deny  R4  "cd $X"
+  expect deny  R11 "sleep 9 > /dev/null &"
 }

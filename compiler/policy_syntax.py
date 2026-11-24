@@ -178,8 +178,9 @@ class CommandSubject:
 Subject = EffectSubject | AnyEffect | CommandSubject
 
 
-class Resolution(StrEnum):
-    """The three values of `compiler.types.Resolution`, as a rule names them."""
+class TargetState(StrEnum):
+    """How well an effect's target is known, as a rule names it: the three values of
+    `compiler.types.Resolution`. Named differently so the evaluator can import both."""
 
     KNOWN = "known"
     BOUNDED = "bounded"
@@ -211,7 +212,9 @@ class Compare(StrEnum):
 class ZoneIs:
     """`zone == secret`, `zone != workspace`, `zone in [workspace, temp]`, `zone not in [...]`.
     True when the zone being decided is one of `zones`. For a bounded target the evaluator decides
-    the effect once per zone its subtree touches, so this tests one zone at a time."""
+    the effect once per zone its subtree touches, so this tests one zone at a time; `**/` patterns
+    count for that subtree only when the effect is a `read`. An `Unknown` target touches every
+    zone, so `zone == x` and `zone != x` both hold for it and the strictest vote wins."""
 
     zones: frozenset[Zone]
     negated: bool
@@ -222,7 +225,7 @@ class ZoneIs:
 class TargetIs:
     """`target known`, `target bounded`, `target unknown`, or with `not`."""
 
-    resolution: Resolution
+    state: TargetState
     negated: bool
     pos: int
 
@@ -238,7 +241,7 @@ class TargetIn:
 
 @dataclass(frozen=True, slots=True)
 class HostIn:
-    """`host in trusted`, on `net_out`."""
+    """`host in trusted`, on `net_out`. An unknown host is in no list."""
 
     source: ListSource
     negated: bool
@@ -376,6 +379,10 @@ class PolicyResult:
 
     policy: PolicyFile | None
     errors: tuple[PolicyError, ...]
+
+    def __post_init__(self) -> None:
+        if (self.policy is None) == (not self.errors):
+            raise ValueError("a PolicyResult holds a policy or errors, never both and never neither")
 
     @property
     def ok(self) -> bool:

@@ -61,13 +61,13 @@ from compiler.policy_syntax import (
     ProgramIn,
     RepeatBy,
     RepeatsDenied,
-    Resolution,
     Rule,
     StatementHas,
     Subject,
     SubstitutionDepth,
     TargetIn,
     TargetIs,
+    TargetState,
     VariableIn,
     ZoneDef,
     ZoneIs,
@@ -283,7 +283,7 @@ class _Parser:
             self.advance()
             negated = self.negation()
             if self.tok.kind is T.WORD and self.tok.text in ("known", "bounded", "unknown"):
-                return TargetIs(Resolution(self.advance().text), negated, start.pos)
+                return TargetIs(TargetState(self.advance().text), negated, start.pos)
             self.expect_word("in")
             return TargetIn(self.source(paths=True), negated, start.pos)
         if self.is_word("host", "variable", "program"):

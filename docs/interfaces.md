@@ -79,7 +79,7 @@ The seam that makes us different from the stateless prior work, and the only one
 
 ## S5. The decision — policy to gate
 
-- **Produced by** `decide(effects, policy, state) -> Decision` in `compiler/policy.py` (Younes).
+- **Produced by** `evaluate(policy, script, effects, state) -> Decision` in `compiler/policy.py` (Younes). It takes the `Script` as well as the effects, because `statement has` must know which statement each effect came from, and `Effect.origin` is a node inside the script. It only evaluates: running a policy's `expect` tests is the gate's job (Youssef), since it needs the gate's session updates between commands.
 - **Consumed by** the gate (Youssef), which turns it into a message for the agent and an execution or a refusal.
 - **Declared in** `compiler/types.py`.
 - **Shape.** `Decision(verdict, reasons)` where `verdict` is one of `ALLOW`, `ESCALATE`, `DENY` and `reasons` is a tuple of `(rule_id, effect)` pairs — the rule ids being the `R1`–`R11` of `docs/policy-rules.md` §5, so that a verdict cites a documented rule and a regression test can assert the rule id rather than just the verdict. A test that only checks `DENY` will pass for the wrong reason sooner or later.
