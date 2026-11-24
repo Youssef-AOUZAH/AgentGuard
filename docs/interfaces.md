@@ -79,7 +79,7 @@ The seam that makes us different from the stateless prior work, and the only one
 
 ## S5. The decision — policy to gate
 
-- **Produced by** `decide(effects, policy, state) -> Decision` in `compiler/policy.py` (Younes).
+- **Produced by** `evaluate(policy, script, effects, state) -> Decision` in `compiler/policy.py` (Younes). It takes the `Script` as well as the effects, because `statement has` must know which statement each effect came from, and `Effect.origin` is a node inside the script. It only evaluates: running a policy's `expect` tests is the gate's job (Youssef), since it needs the gate's session updates between commands.
 - **Consumed by** the gate (Youssef), which turns it into a message for the agent and an execution or a refusal.
 - **Declared in** `compiler/types.py`.
 - **Shape.** `Decision(verdict, reasons)` where `verdict` is one of `ALLOW`, `ESCALATE`, `DENY` and `reasons` is a tuple of `(rule_id, effect)` pairs — the rule ids being the `R1`–`R11` of `docs/policy-rules.md` §5, so that a verdict cites a documented rule and a regression test can assert the rule id rather than just the verdict. A test that only checks `DENY` will pass for the wrong reason sooner or later.
@@ -120,7 +120,7 @@ The seam nobody thinks about until the metric cannot be computed.
 
 `docs/policy-rules.md` §6 sketches a small DSL, and `docs/decisions.md` records that we prefer writing our own over reading YAML because it is a second small compiler and good coursework.
 
-**Decided (23 November 2026):** Youssef writes its lexer and parser, producing a policy AST declared in `compiler/policy_syntax.py`; Younes writes the evaluator in `compiler/policy.py` against that AST. The language's shape — no rule order, rule ids on every line, one construct for combinations within a statement, no machine-specific paths, tests inside the file — is recorded in `docs/decisions.md`. The file extension and location are `policies/*.pol`.
+**Decided (23 November 2026):** Youssef writes its lexer and parser, producing a policy AST declared in `compiler/policy_syntax.py`; Younes writes the evaluator in `compiler/policy.py` against that AST. The language's shape — no rule order, rule ids on every line, one construct for combinations within a statement, no machine-specific paths, tests inside the file — is recorded in `docs/decisions.md`. The file extension and location are `policies/*.pol`. Built: `parse_policy(src) -> PolicyResult` in `compiler/policy_parser.py` returns a checked `PolicyFile` (declared in `compiler/policy_syntax.py`) or every error with its line and column; the language and its grammar are in `docs/policy-rules.md` §6.
 
 ## S10. Results to the paper
 

@@ -156,34 +156,71 @@ Allowing deletion inside the workspace is not a concession we are making relucta
 
 Default when every rule abstains: `ESCALATE`.
 
-## 6. Shape of a rule file
+## 6. The policy language
 
-We agreed in `docs/decisions.md` that writing our own small policy language is better coursework than reading YAML, and the survey notes that the only policy languages in the field are AgentSpec's and Agent-C's DSLs, so a DSL is defensible. A sketch, to argue about:
+Policies are files in `policies/*.pol`, written in a small language of our own; `policies/default.pol` is the one the gate ships with. The front end (lexer, parser, checker) is in `compiler/policy_lexer.py`, `compiler/policy_parser.py` and `compiler/policy_check.py`, and its output, the tree the evaluator reads, is declared in `compiler/policy_syntax.py`. Why a language of our own rather than YAML, and the shape decisions below, are recorded in `docs/decisions.md`.
 
 ```
 policy "workspace-confined" {
-  workspace "/home/youssef/project"
-  allow_hosts ["pypi.org", "registry.npmjs.org", "github.com"]
+  zone secret ["~/.ssh/**", "**/.env"]
+  hosts trusted ["pypi.org", "*.githubusercontent.com"]
+  paths benign ["/dev/null"]
+  names loaders ["IFS", "PATH", "LD_PRELOAD"]
 
-  deny    delete | write | append | move  where zone not in [workspace, temp]
-  deny    read                            where zone == secret
-  allow   read                            where zone == system
-  deny    chdir                           where zone != workspace
+  R2  deny     delete | write | append | priv_change  where target unknown
+  R4  allow    read | write | append | delete | chdir  where zone == workspace
+  R4  deny     write | append | delete  where zone not in [workspace, temp] and target not in benign
+  R4  deny     read                     where zone == secret
+  R6  escalate net_out                  where host not in trusted
+  R6  deny     net_out                  where statement has read in zone secret
+  R7  escalate command                  where substitution depth > 1
+  R9  deny     any                      where repeats denied zone
 
-  deny    any    where target unknown and kind in [delete, write, append, move, priv_change]
-  escalate read  where target unknown
-
-  deny    interpret
-  deny    priv_change
-  deny    net_listen
-  escalate net_out where host not in allow_hosts
-  deny    net_out where pipeline reads zone secret
+  expect deny R4 "rm -rf ~/*"
+  expect allow   "cat notes.txt" after "cd ~/Desktop"
 }
 ```
 
-This is still a sketch, and the interesting design questions are deliberately unanswered: how a rule refers to combinations across a pipeline (the exfiltration rule), whether rule order or specificity decides conflicts, and how the `workspace` root is bound. Writing a lexer and parser for this language is a second, small compiler, which is a nice symmetry for the report.
+### Grammar
 
-Two features of cc-bash-guard we should copy whatever syntax we pick. Every rule carries its own test cases, listing commands that must come out allow, escalate, deny or abstain, and a `verify` step runs them and refuses to build if a rule is too broad. And overly broad allow rules are rejected by the verifier, in particular any allow for an interpreter.
+```
+file       = "policy" STRING "{" { item } "}"
+item       = zone_def | list_def | rule | expect
+zone_def   = "zone" ZONE string_list
+list_def   = ("hosts" | "paths" | "names") WORD string_list
+rule       = RULE_ID verdict subject [ "where" condition { "and" condition } ]
+verdict    = "allow" | "escalate" | "deny"
+subject    = "any" | "command" | KIND { "|" KIND }
+condition  = "zone" ("==" | "!=") ZONE
+           | "zone" [ "not" ] "in" "[" ZONE { "," ZONE } "]"
+           | "target" [ "not" ] ( "known" | "bounded" | "unknown" )
+           | ( "target" | "host" | "variable" | "program" ) [ "not" ] "in" source
+           | "statement" [ "not" ] "has" KIND [ "in" "zone" ZONE ]
+           | [ "not" ] "repeats" "denied" ( "target" | "zone" )
+           | [ "not" ] "background"
+           | "substitution" "depth" COMPARE NUMBER
+source     = WORD | string_list
+string_list= "[" [ STRING { "," STRING } [ "," ] ] "]"
+expect     = "expect" verdict [ RULE_ID ] STRING [ "after" STRING { "," STRING } ]
+```
+
+`KIND` is an effect kind in lower case (`read`, `net_out`, `priv_change`, `unknown`, ...), `ZONE` a zone name, `RULE_ID` one of the rule ids in §5. `#` starts a comment. Strings use `"`, with `\"`, `\`, `\n` and `\t` as escapes.
+
+### Meaning
+
+- **No rule order.** Every rule whose subject and conditions hold votes its verdict; the result is the join of the votes, so deny wins, and an effect no rule matches abstains, which becomes `ESCALATE`. An `allow` stops abstention and cannot cancel a `deny`. Because of this the language needs no `or`: two rules already mean either.
+- **Every rule names the rule of §5 it implements**, so a decision cites a documented rule.
+- **Zones.** The file defines `secret`, `system`, `device` and `temp` by path pattern; `workspace` and `home` are bound by the gate from `SessionState`, and `outside` is everything else. A pattern starts with `/`, `~`, `{workspace}`, `{gate}` or `**/` (at any depth); `*` matches within one path component and `**` across components. When several zones match a path, the first in this order wins: secret, device, workspace, temp, system, home, outside. That decides which zone a path is in, not how bad a zone is; the workspace comes before temp and home because a workspace may live under either.
+- **Bounded targets.** A target that bounds a directory is decided once for every zone its subtree can touch. For a `read`, that includes zones defined by `**/` patterns: `grep -r x .` can read a `.env` file, so it touches `secret`. For `write`, `append` and `delete`, only anchored patterns count, so `rm -rf build` inside the workspace stays a workspace delete: deleting a `.env` there changes the workspace, it does not leak a secret.
+- **Unknown targets touch every zone**, as if they were `BOUNDED(/)`, so `cd $X` meets the strictest rule for `chdir` in any zone and is denied without a special case. An unknown host is in no list: `host in trusted` is false, `host not in trusted` true.
+- **Combinations** have one construct, `statement has KIND [in zone Z]`: another effect in the same statement (one `and_or` list). It is what the exfiltration rule needs, and no other rule needs more.
+- **Retries.** `repeats denied target` matches an effect of the same kind on the same target as one refused earlier in the session, and `repeats denied zone` the same kind in the same zone. Which the default policy should use is the R9 research question, so the language offers both.
+- **`command` rules** test facts about the whole command line rather than an effect: `background` (a statement ends with `&`) and `substitution depth`.
+- **Tests live in the file.** Each `expect` names a verdict, optionally the rule that must decide it, the command, and commands to run first. They are run when the gate loads the policy, through the whole pipeline and the gate's session updates (so a refused `cd` in `after` leaves the working directory where it was), and a policy that fails one is refused.
+
+### What the front end refuses
+
+Besides syntax errors, the checker refuses a file that: defines `workspace`, `home` or `outside`, or a zone twice; names a list that does not exist, or one of the wrong kind; has an unanchored path pattern or one with `..`; has a host that is not a lower-case DNS name; uses a condition that does not suit its subject (`zone` on `net_out`, `host` on `read`, `background` outside a `command` rule); names `move`, which is never an effect; or allows `interpret`, directly or through `any`. Errors are collected, not fatal: the parser resynchronises at the next item that begins a line, so one run reports every mistake, each with its line and column. A file with any error is not loaded.
 
 ## 7. Worked examples
 
