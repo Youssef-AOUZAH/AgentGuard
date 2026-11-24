@@ -370,10 +370,17 @@ class SessionState:
     """What the gate remembers between commands. The gate is the only writer; the resolver and
     the policy engine get this read-only value and must not try to change it.
 
-    `cwd`, `variables` and `denied` are the three fields of `docs/interfaces.md` S3. `home` and
-    `workspace` are fixed for the session and bound when the gate starts: the resolver needs
-    `home` to resolve `~`, and the policy needs both to compute zones. They live here because
-    `resolve(script, state)` receives no other configuration.
+    `cwd`, `variables` and `denied` are the three fields of `docs/interfaces.md` S3. `home`,
+    `workspace` and `gate_root` are fixed for the session and bound when the gate starts: the
+    resolver needs `home` to resolve `~`, and the policy needs all three to compute zones and to
+    bind the `~`, `{workspace}` and `{gate}` anchors of a policy file. They live here because
+    neither `resolve(script, state)` nor `evaluate(policy, script, effects, state)` receives any
+    other configuration.
+
+    `gate_root` is the directory holding the gate's own code, policies and logs, which R8
+    protects. It is required, with no default: a missing gate root would make every `{gate}`
+    pattern match nothing, and self-protection would switch off without an error. It may not
+    contain the workspace, since R8 would then deny every write the agent is there to make.
 
     `variables` maps a name to its value when it was assigned from a statically known word, or
     to an `Unknown` once it has been assigned from anything else; a variable that is not present
@@ -384,11 +391,14 @@ class SessionState:
     cwd: PurePosixPath
     home: PurePosixPath
     workspace: PurePosixPath
+    gate_root: PurePosixPath
     variables: Mapping[str, str | Unknown] = field(default_factory=dict)
     denied: tuple[DeniedEntry, ...] = ()
 
     def __post_init__(self) -> None:
-        for path in (self.cwd, self.home, self.workspace):
+        for path in (self.cwd, self.home, self.workspace, self.gate_root):
             _check_absolute_path(path)
+        if self.workspace.is_relative_to(self.gate_root):
+            raise ValueError(f"the gate root {self.gate_root} must not contain the workspace")
         # Copy into a read-only view, so the caller's dict cannot change this state afterwards.
         object.__setattr__(self, "variables", MappingProxyType(dict(self.variables)))

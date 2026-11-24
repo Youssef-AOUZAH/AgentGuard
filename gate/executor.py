@@ -164,7 +164,9 @@ class TempDirExecutor:
 
     def initial_state(self) -> SessionState:
         """A fresh session: working directory at the workspace root, no variables, no history."""
-        return SessionState(cwd=self.workspace, home=self.home, workspace=self.workspace)
+        return SessionState(
+            cwd=self.workspace, home=self.home, workspace=self.workspace, gate_root=self._posix[".gate"]
+        )
 
     def close(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
