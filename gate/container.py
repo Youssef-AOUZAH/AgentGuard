@@ -193,7 +193,7 @@ class ContainerExecutor:
     # ------------------------------------------------------------------ the sandbox's roots
 
     def initial_state(self) -> SessionState:
-        return SessionState(cwd=self.workspace, home=self.home, workspace=self.workspace)
+        return SessionState(cwd=self.workspace, home=self.home, workspace=self.workspace, gate_root=_GATE)
 
     def put_file(self, path: PurePosixPath, data: bytes) -> None:
         """Create a file in the sandbox as the sandbox user, for the bench to seed canaries and

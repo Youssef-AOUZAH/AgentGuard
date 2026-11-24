@@ -36,6 +36,7 @@ from compiler.types import (
 
 WS = PurePosixPath("/work/project")
 HOME = PurePosixPath("/home/dev")
+GATE = PurePosixPath("/opt/agentguard")
 
 
 @pytest.fixture
@@ -226,14 +227,33 @@ def test_tighten_raises_and_keeps_both_reasons(origin):
 # --- Session state ----------------------------------------------------------
 
 
+def test_gate_root_is_required():
+    with pytest.raises(TypeError):
+        SessionState(cwd=WS, home=HOME, workspace=WS)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("gate", ["/work", "/work/project", "/"])
+def test_gate_root_must_not_contain_the_workspace(gate):
+    with pytest.raises(ValueError, match="gate root"):
+        SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=PurePosixPath(gate))
+
+
+def test_gate_root_may_sit_inside_the_workspace():
+    # Unusual but coherent: R8 then protects that one subtree.
+    state = SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=WS / ".agentguard")
+    assert state.gate_root == WS / ".agentguard"
+
+
 def test_session_state_paths_must_be_absolute():
     with pytest.raises(ValueError, match="absolute"):
-        SessionState(cwd=PurePosixPath("project"), home=HOME, workspace=WS)
+        SessionState(cwd=PurePosixPath("project"), home=HOME, workspace=WS, gate_root=GATE)
+    with pytest.raises(ValueError, match="absolute"):
+        SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=PurePosixPath("gate"))
 
 
 def test_session_state_variables_are_read_only_and_copied():
     source = {"D": "/etc"}
-    state = SessionState(cwd=WS, home=HOME, workspace=WS, variables=source)
+    state = SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=GATE, variables=source)
     source["D"] = "/tmp"
     assert state.variables["D"] == "/etc"
     with pytest.raises(TypeError):
@@ -241,13 +261,14 @@ def test_session_state_variables_are_read_only_and_copied():
 
 
 def test_session_state_is_updated_by_replacement():
-    state = SessionState(cwd=WS, home=HOME, workspace=WS)
+    state = SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=GATE)
     moved = dataclasses.replace(state, cwd=WS / "src")
     assert state.cwd == WS and moved.cwd == WS / "src"
 
 
 def test_untracked_value_is_recorded_as_unknown():
-    state = SessionState(cwd=WS, home=HOME, workspace=WS, variables={"X": Unknown("from $(...)")})
+    variables = {"X": Unknown("from $(...)")}
+    state = SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=GATE, variables=variables)
     assert isinstance(state.variables["X"], Unknown)
 
 
@@ -258,5 +279,5 @@ def test_denied_history_rejects_allowed_commands():
 
 def test_denied_history_entry(origin):
     entry = DeniedEntry(turn=3, command="rm -rf build", decision=deny())
-    state = SessionState(cwd=WS, home=HOME, workspace=WS, denied=(entry,))
+    state = SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=GATE, denied=(entry,))
     assert state.denied[0].turn == 3
