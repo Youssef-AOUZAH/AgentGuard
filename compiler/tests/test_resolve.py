@@ -27,10 +27,11 @@ from compiler.types import SessionState, Unknown
 
 WS = PurePosixPath("/work/project")
 HOME = PurePosixPath("/home/dev")
+GATE = PurePosixPath("/opt/agentguard")
 
 
 def state(**variables) -> SessionState:
-    return SessionState(cwd=WS, home=HOME, workspace=WS, variables=variables)
+    return SessionState(cwd=WS, home=HOME, workspace=WS, gate_root=GATE, variables=variables)
 
 
 def commands(src: str, st: SessionState | None = None):
@@ -383,6 +384,73 @@ def test_bash_passes_the_fields_we_predict(word, tmp_path):
 @pytest.mark.parametrize("word", ["$C", '"$C"', "$C$E", "a,$C,b"])
 def test_bash_splits_on_custom_ifs_as_we_do(word, tmp_path):
     assert _bash_argv(word, tmp_path, ifs=",") == _ours(word, ifs=","), word
+
+
+# --------------------------------------------------------------------------- state changes we must follow
+#
+# From the review of #7: each script changes a variable or the directory in a way the first
+# version missed. bash is asked what the last word really is (builtins and assignments only, then
+# printf), and the resolver must either agree or say it does not know. A known but different
+# value is the bug.
+
+_STATE_CHANGES = [
+    ("X=/tmp; E=; X=/etc $E; ", '"$X"'),
+    ("x=/tmp; : $((x=5)); ", '"$x"'),
+    ("x=y=5; y=/tmp; : $((x)); ", '"$y"'),
+    ("i=0; y=/tmp; : ${a[i=1]}; ", '"$i"'),
+    ("s=abc; i=0; : ${s: i=1}; ", '"$i"'),
+    ("X=/tmp; declare -n r=X; r=/etc; ", '"$X"'),
+    ("X=/tmp; let X=5; ", '"$X"'),
+    ("OPTARG=/tmp; set -- -a /etc; getopts a: o; ", '"$OPTARG"'),
+    ("OPTIND=7; set -- -a /etc; getopts a: o; ", '"$OPTIND"'),
+]
+
+
+def _bash_after(prelude: str, word: str, cwd) -> str:
+    script = prelude + "printf '%s\\0' MARK " + word
+    run = [BASH, "--noprofile", "--norc", "-s"]
+    out = subprocess.run(run, input=script.encode(), capture_output=True, check=True, cwd=cwd).stdout
+    return out.decode().split("\0")[1]
+
+
+@pytest.mark.parametrize(("prelude", "word"), _STATE_CHANGES)
+def test_state_changes_are_followed_or_unknown(prelude, word, tmp_path):
+    value = commands(prelude + "printf '%s\\0' MARK " + word)[-1].words[-1]
+    if isinstance(value, Unresolved):
+        return
+    predicted = [f.text for f in value.fields]
+    if BASH is None:
+        pytest.skip("bash is not installed")
+    assert predicted == [_bash_after(prelude, word, tmp_path)], prelude
+
+
+def test_empty_command_word_applies_prefix_assignments():
+    # POSIX: if no command name results, the assignments affect the current shell.
+    assert argv('X=/tmp; E=; X=/etc $E; echo "$X"', state()) == ["echo", "/etc"]
+
+
+@pytest.mark.parametrize(
+    "prelude",
+    ["x=/tmp; : $((x=5)); ", "X=/tmp; declare -n r=x; r=1; ", "X=/tmp; let X=5; ", "local -rn r=X; "],
+)
+def test_arithmetic_namerefs_and_let_make_variables_unknown(prelude):
+    assert isinstance(argv(prelude + 'echo "$x" "$X"', state(x="/tmp", X="/tmp")), Unresolved)
+
+
+def test_arithmetic_on_plain_integers_keeps_other_variables():
+    assert commands('n=3; y=/tmp; echo "$y" $((n+1))')[-1].words[1] == Fields((Field("/tmp"),))
+
+
+def test_getopts_invalidates_optarg_and_optind():
+    st = state(OPTARG="/tmp", OPTIND="1")
+    assert isinstance(argv('getopts a: o; echo "$OPTARG"', st), Unresolved)
+    assert isinstance(argv('getopts a: o; echo "$OPTIND"', st), Unresolved)
+
+
+@pytest.mark.parametrize("rotate", ["pushd +1", "pushd -0", "popd +1"])
+def test_directory_stack_rotation_is_not_followed(rotate):
+    # bash: `cd /tmp; pushd /etc; pushd +1` ends in /tmp, not /etc/+1.
+    assert isinstance(cwd(f"cd /tmp && pushd /etc && {rotate} && ls"), Unknown)
 
 
 # --------------------------------------------------------------------------- properties

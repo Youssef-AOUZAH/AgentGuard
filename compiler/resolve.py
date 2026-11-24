@@ -90,7 +90,7 @@ _BRACE_SEQ = re.compile(r"\{(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?
 VARIABLE_BUILTINS = frozenset(
     {
         "unset", "read", "export", "declare", "typeset", "local", "readonly", "mapfile", "readarray",
-        "getopts", "printf",
+        "getopts", "printf", "let",
     }
 )  # fmt: skip
 # The variable a builtin writes when given no name.
@@ -222,6 +222,9 @@ class _Env:
         if not updates:
             return self
         return replace(self, variables=MappingProxyType({**self.variables, **updates}))
+
+    def forget_variables(self, reason: str) -> _Env:
+        return replace(self, variables=_AllUnknown(self.variables, Unknown(reason)))
 
     def forget_all(self, reason: str) -> _Env:
         unknown = Unknown(reason)
@@ -381,7 +384,10 @@ def _walk_parts(parts: Iterable[WordPart]):
 
 def _after(command: ResolvedCommand, env: _Env) -> _Outcome:
     """The state after `command` succeeds and after it fails."""
-    env = env.with_variables(_assigned_by_expansion(command.node, env))
+    names, forget = _assigned_by_expansion(command.node, env)
+    env = env.with_variables(names)
+    if forget is not None:
+        env = env.forget_variables(forget)
     head = command.head
     if command.node.name is None:
         # A bare assignment persists; it cannot fail in a way that undoes it.
@@ -389,7 +395,9 @@ def _after(command: ResolvedCommand, env: _Env) -> _Outcome:
     if isinstance(head, Unresolved):
         return _Outcome.same(env.forget_all(f"a command we could not name ran: {head.reason}"))
     if head is None:
-        return _Outcome.same(env)
+        # Every word expanded to nothing, so no command runs and, as POSIX says, the prefix
+        # assignments then apply to the shell itself: `X=/etc $EMPTY` sets X.
+        return _Outcome.same(env.with_variables(dict(command.env)))
     argv = command.argv
     if isinstance(argv, Unresolved):
         # The name is known but an argument is not: a state-changing builtin may change anything.
@@ -421,18 +429,55 @@ def _after(command: ResolvedCommand, env: _Env) -> _Outcome:
 _STATEFUL = VARIABLE_BUILTINS | OPAQUE_BUILTINS | OPTION_BUILTINS | DIRECTORY_BUILTINS
 
 
-def _assigned_by_expansion(node: SimpleCommand, env: _Env) -> dict[str, Unknown]:
-    """`${x:=v}` and `${x=v}` assign `x` while expanding."""
+def _assigned_by_expansion(node: SimpleCommand, env: _Env) -> tuple[dict[str, Unknown], str | None]:
+    """Variables assigned while the command's words expand, and a reason to forget every
+    variable when we cannot tell which.
+
+    `${x:=v}` and `${x=v}` assign `x`. Arithmetic assigns too, in `$((x=5))`, `$((x++))`, an
+    array subscript `${a[i=1]}` or a substring offset `${s: i=1}`. And arithmetic evaluates a
+    variable's value as an expression in turn, so `$((x))` with `x='y=5'` assigns `y`: unless
+    every variable it names holds a plain integer, any variable may change.
+    """
     names: dict[str, Unknown] = {}
+    forget: str | None = None
     targets = (r.target for r in node.redirects if r.target is not None)
     for word in (*(a.value for a in node.assignments), *node.words, *targets):
         for part in _walk_parts(word.parts):
             if part.kind is PartKind.PARAM_EXP and (match := _ASSIGNING_PARAM.match(part.raw)):
                 names[match.group(1)] = Unknown(f"assigned while expanding {part.raw}")
-    return names
+            if not _is_arithmetic(part):
+                continue
+            mentioned = _ARITH_NAME.findall(part.raw)
+            if _ARITH_ASSIGN.search(part.raw):
+                names.update({n: Unknown(f"assigned by arithmetic in {part.raw}") for n in mentioned})
+            for name in mentioned:
+                value = env.variables.get(name)
+                if not (isinstance(value, str) and _INTEGER.fullmatch(value)):
+                    forget = f"arithmetic in {part.raw} evaluates ${name}, which may assign other variables"
+    return names, forget
+
+
+def _is_arithmetic(part: WordPart) -> bool:
+    if part.kind is PartKind.ARITH_EXP:
+        return True
+    return part.kind is PartKind.PARAM_EXP and bool(_ARITH_PARAM.match(part.raw))
+
+
+# `${a[...]}` subscripts and `${s:offset}` offsets are arithmetic; `${s:-x}` and friends are not.
+_ARITH_PARAM = re.compile(r"\$\{[!#]?[A-Za-z_][A-Za-z0-9_]*(?:\[|:(?![-=?+]))")
+_ARITH_NAME = re.compile(r"(?<![A-Za-z0-9_$])[A-Za-z_][A-Za-z0-9_]*")
+_ARITH_ASSIGN = re.compile(r"(?<![=!<>])=(?!=)|\+\+|--|<<=|>>=|[-+*/%&|^]=")
+_INTEGER = re.compile(r"-?[0-9]+")
 
 
 def _invalidate(head: str, args: tuple[Field, ...], env: _Env) -> _Env:
+    if head == "let":
+        # Each argument is an arithmetic expression, which may assign any variable it names, and
+        # through their values any other.
+        return env.forget_variables("let evaluates arithmetic that may assign any variable")
+    if head in ("declare", "typeset", "local") and any(_is_option_with(f.text, "n") for f in args):
+        # A nameref makes later assignments to one name write another.
+        return env.forget_variables(f"{head} -n makes a name refer to another variable")
     if head == "printf" and not any(f.text.startswith("-v") for f in args):
         return env  # printf without -v writes no variable
     if any(f.is_pattern for f in args):
@@ -442,7 +487,13 @@ def _invalidate(head: str, args: tuple[Field, ...], env: _Env) -> _Env:
     names += [m.group(1) for f in args if f.text.startswith("-") and (m := _NAME_ARG.fullmatch(f.text[2:]))]
     if head in _DEFAULT_TARGET:
         names.append(_DEFAULT_TARGET[head])
+    if head == "getopts":
+        names += ["OPTARG", "OPTIND"]
     return env.with_variables({name: Unknown(f"changed by {head}") for name in names})
+
+
+def _is_option_with(text: str, letter: str) -> bool:
+    return len(text) > 1 and text[0] in "-+" and not text.startswith("--") and letter in text[1:]
 
 
 def _change_directory(head: str, args: tuple[Field, ...], command: ResolvedCommand, env: _Env) -> _Env:
@@ -453,6 +504,8 @@ def _change_directory(head: str, args: tuple[Field, ...], command: ResolvedComma
 
     if head == "popd" or command.env:
         return unknown(f"{head} with a directory stack or prefix assignments is not followed")
+    if head == "pushd" and any(re.fullmatch(r"[+-][0-9]+", f.text) for f in args):
+        return unknown("pushd +N or -N rotates the directory stack")
     operands = list(args)
     while operands and operands[0].text.startswith("-") and operands[0].text != "-":
         if operands[0].text == "--":
