@@ -15,12 +15,14 @@ from compiler.parser import parse_source
 from compiler.syntax import simple_commands
 from compiler.types import (
     DESTRUCTIVE_KINDS,
+    FILE_KINDS,
     PATH_KINDS,
     Bounded,
     Decision,
     DeniedEntry,
     Effect,
     EffectKind,
+    Fd,
     Host,
     Known,
     Port,
@@ -108,6 +110,42 @@ def test_non_path_targets(origin):
         Port(70000)
 
 
+@pytest.mark.parametrize("kind", sorted(FILE_KINDS))
+@pytest.mark.parametrize("target", [None, Host("example.com"), Fd(3)])
+def test_file_effect_needs_a_path(origin, kind, target):
+    # Without a path R4 has nothing to zone, and the effect would slip past it.
+    with pytest.raises(ValueError, match="path target"):
+        Effect(kind, target, Known(), origin)
+
+
+@pytest.mark.parametrize("kind", sorted(FILE_KINDS))
+def test_file_effect_without_a_path_is_unknown(origin, kind):
+    effect = Effect(kind, None, Unknown("command substitution"), origin)
+    assert effect.target is None
+
+
+def test_priv_change_may_have_no_path(origin):
+    # `sudo` has no path, and R5 denies every PRIV_CHANGE regardless.
+    assert Effect(EffectKind.PRIV_CHANGE, None, Known(), origin).target is None
+    assert Effect(EffectKind.PRIV_CHANGE, WS / "run.sh", Known(), origin).target == WS / "run.sh"
+
+
+@pytest.mark.parametrize("resolution", [Known(), Bounded(), Unknown("glob")])
+def test_move_is_never_an_effect(origin, resolution):
+    target = None if isinstance(resolution, Unknown) else WS / "x"
+    with pytest.raises(ValueError, match="DELETE of the source plus WRITE"):
+        Effect(EffectKind.MOVE, target, resolution, origin)
+
+
+def test_move_as_delete_plus_write_keeps_the_secret_visible(origin):
+    # `mv ~/.ssh/id_rsa ./x`: the source is what makes it dangerous, so it must be its own effect.
+    effects = {
+        Effect(EffectKind.DELETE, HOME / ".ssh" / "id_rsa", Known(), origin),
+        Effect(EffectKind.WRITE, WS / "x", Known(), origin),
+    }
+    assert {e.target for e in effects} == {HOME / ".ssh" / "id_rsa", WS / "x"}
+
+
 def test_effects_are_hashable_and_origin_counts(origin):
     # Effects travel in a set (interfaces.md S4), so they must hash over real AST nodes.
     other = next(simple_commands(parse_source("ls; rm -rf build")))
@@ -128,10 +166,11 @@ def test_kind_groups_match_the_rules():
         EffectKind.WRITE,
         EffectKind.APPEND,
         EffectKind.DELETE,
-        EffectKind.MOVE,
         EffectKind.PRIV_CHANGE,
     }
     assert DESTRUCTIVE_KINDS <= PATH_KINDS
+    assert PATH_KINDS - FILE_KINDS == {EffectKind.PRIV_CHANGE}
+    assert EffectKind.MOVE not in PATH_KINDS
     assert len(EffectKind) == 14
 
 
@@ -158,6 +197,13 @@ def test_deny_must_cite_a_rule():
 def test_r1_reason_has_no_effect():
     decision = Decision(Verdict.DENY, (Reason(RuleId.R1, None, "brace-group"),))
     assert decision.reasons[0].effect is None
+
+
+def test_r11_reason_has_no_effect():
+    # R11 fires on the `&` separator, not on anything the command does.
+    decision = Decision(Verdict.DENY, (Reason(RuleId.R11, None, "background"),))
+    assert decision.reasons[0].rule == "R11"
+    assert len(RuleId) == 11
 
 
 def test_tighten_cannot_lower_a_deny(origin):

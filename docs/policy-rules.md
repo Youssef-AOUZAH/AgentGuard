@@ -20,7 +20,7 @@ Effect(kind, target, resolution, origin)
 | `WRITE` | creates or truncates a file |
 | `APPEND` | adds to a file without truncating |
 | `DELETE` | removes a file or directory |
-| `MOVE` | renames, which is a `DELETE` of the source plus a `WRITE` of the destination |
+| `MOVE` | renames; never emitted as itself, always as a `DELETE` of the source plus a `WRITE` of the destination |
 | `CHDIR` | changes the session's working directory |
 | `EXEC` | runs a program |
 | `INTERPRET` | runs code supplied inline or on stdin, rather than a program by name |
@@ -31,9 +31,9 @@ Effect(kind, target, resolution, origin)
 | `SIGNAL` | sends a signal to a process |
 | `UNKNOWN` | the command head is not in our knowledge table |
 
-`MOVE` decomposing into two effects, and `INTERPRET` being distinct from `EXEC`, are both deliberate. `EXEC` of `python` is ordinary; `INTERPRET` with `python -c` means the real program is an argument we would have to parse in another language, which we cannot, so it is unresolved by construction.
+`MOVE` decomposing into two effects, and `INTERPRET` being distinct from `EXEC`, are both deliberate. A single `MOVE` would carry only one target, and `mv ~/.ssh/id_rsa ./x` judged on its destination alone is a workspace write that hides the removal of a secret; `compiler/types.py` refuses to build a `MOVE` effect for that reason. The kind stays in the list so the knowledge table can say what `mv` does. `EXEC` of `python` is ordinary; `INTERPRET` with `python -c` means the real program is an argument we would have to parse in another language, which we cannot, so it is unresolved by construction.
 
-**`target`** is a `Path`, a `Host`, a file descriptor, a process, or `None`.
+**`target`** is a `Path`, a `Host`, a file descriptor, a process, or `None`. `READ`, `WRITE`, `APPEND`, `DELETE` and `CHDIR` must name a path unless their resolution is `UNKNOWN`: R4 decides on the zone of the path, so a file effect with no path, or with a host or file descriptor in its place, would never reach it. `PRIV_CHANGE` is exempt, since `sudo` has no path and R5 denies it regardless.
 
 **`resolution`** has three values, and this field rather than the kind is what most denials turn on:
 
@@ -152,6 +152,8 @@ Allowing deletion inside the workspace is not a concession we are making relucta
 
 **R10 — unknown head.** A command whose head is not in the knowledge table yields an `UNKNOWN` effect and `ESCALATE`. Never `ALLOW`: an unknown program is an unknown effect set. The rate at which R10 fires on the benign corpus is a direct measure of how incomplete our knowledge table is, and is worth reporting in the paper.
 
+**R11 — backgrounded command.** A statement ending in `&` is `DENY`. The parser accepts the form and records it as `Statement.background` (`compiler/grammar.md`) so that the refusal can cite a rule instead of a syntax error. A backgrounded command's effects land at an unknown time relative to the later commands in the session, which is the time-of-check gap in `docs/threat-model.md` widened on purpose. The reason cites no effect, since the rule fires on the separator rather than on anything the command does.
+
 Default when every rule abstains: `ESCALATE`.
 
 ## 6. The policy language
@@ -246,6 +248,8 @@ How the pieces combine, as a first set of regression tests:
 | `git push --force` | `NET_OUT` to a host **not on the command line**, `EXEC git` | R6 cannot see the host | `ESCALATE` |
 | `curl https://unknown.example \| tee out` | `NET_OUT` host not allowed | R6 | `ESCALATE` |
 | `somebinary --flag` | `UNKNOWN` | R10 | `ESCALATE` |
+| `mv ~/.ssh/id_rsa ./x` | `DELETE` secret zone, `WRITE` workspace | R4 | `DENY` |
+| `sleep 60 &` | `EXEC sleep`, statement backgrounded | R11 | `DENY` |
 | `cat notes.txt` after a denied `cd` | `READ` known, resolved against the unchanged cwd | none | `ALLOW` |
 
 The `echo "rm -rf /" > log.txt` row is the one that catches naive implementations, and bashguard's documentation uses the same example: a regex sees `rm -rf /` inside a string literal, while the parser sees `echo` with one argument and a redirection. If our compiler ever denies that command, we have regressed into string matching.

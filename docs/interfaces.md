@@ -82,7 +82,7 @@ The seam that makes us different from the stateless prior work, and the only one
 - **Produced by** `decide(effects, policy, state) -> Decision` in `compiler/policy.py` (Younes).
 - **Consumed by** the gate (Youssef), which turns it into a message for the agent and an execution or a refusal.
 - **Declared in** `compiler/types.py`.
-- **Shape.** `Decision(verdict, reasons)` where `verdict` is one of `ALLOW`, `ESCALATE`, `DENY` and `reasons` is a tuple of `(rule_id, effect)` pairs — the rule ids being the `R1`–`R10` of `docs/policy-rules.md` §5, so that a verdict cites a documented rule and a regression test can assert the rule id rather than just the verdict. A test that only checks `DENY` will pass for the wrong reason sooner or later.
+- **Shape.** `Decision(verdict, reasons)` where `verdict` is one of `ALLOW`, `ESCALATE`, `DENY` and `reasons` is a tuple of `(rule_id, effect)` pairs — the rule ids being the `R1`–`R11` of `docs/policy-rules.md` §5, so that a verdict cites a documented rule and a regression test can assert the rule id rather than just the verdict. A test that only checks `DENY` will pass for the wrong reason sooner or later.
 - **The lattice is the contract.** `ALLOW < ESCALATE < DENY`, and no stage may lower a verdict. The gate may raise what the policy returned; it may never soften it. `ABSTAIN`, if the policy engine uses it internally, must not cross this seam: the policy converts total abstention to `ESCALATE` before returning, so the gate never has to know what abstention means.
 - **Pitfall.** `ESCALATE` with no human available is `DENY`, and that conversion belongs to the gate, not the policy. The policy does not know whether anyone is watching.
 
