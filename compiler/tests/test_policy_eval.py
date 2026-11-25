@@ -252,11 +252,19 @@ def test_a_refusal_that_may_reach_a_list_is_about_the_list_not_the_zone():
     # `rm -rf /` may reach the protected paths from inside the workspace. That vote is about the
     # protected paths, so ordinary workspace deletes afterwards are not retries, while deleting a
     # protected path, or anything in a zone the refusal was really about, still is.
-    state = refused(START, "rm -rf /", decide("rm -rf /"))
-    assert decide("rm notes.txt", state=state).verdict is Verdict.ALLOW
-    assert decide("rm -rf build", state=state).verdict is Verdict.ALLOW
-    assert RuleId.R9 in rules(decide("rm .git/config", state=state))
-    assert RuleId.R9 in rules(decide("rm /etc/x", state=state))
+    p = policy(
+        'paths protected ["{workspace}/.git/config"]\n'
+        "R4 allow delete where zone == workspace\n"
+        "R4 deny delete where zone != workspace\n"
+        "R8 deny delete where target in protected\n"
+        "R9 deny any where repeats denied zone\n"
+        "R10 allow exec where target known"
+    )
+    state = refused(START, "rm -rf /", decide("rm -rf /", p))
+    assert decide("rm notes.txt", p, state).verdict is Verdict.ALLOW
+    assert decide("rm -rf build", p, state).verdict is Verdict.ALLOW
+    assert RuleId.R9 in rules(decide("rm .git/config", p, state))
+    assert RuleId.R9 in rules(decide("rm /etc/x", p, state))
 
 
 def test_a_refused_unknown_target_is_about_no_zone():
