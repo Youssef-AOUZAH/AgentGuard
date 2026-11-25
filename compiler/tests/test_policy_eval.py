@@ -57,23 +57,10 @@ def refused(state: SessionState, src: str, decision: Decision) -> SessionState:
 
 # --------------------------------------------------------------------------- the default policy's own tests
 
-# Two expectations disagree with R8 under the sound reading of `target in` for a bounded target.
-# `{workspace}/.git/config` is protected and lies under the workspace, so a delete bounded by the
-# workspace may reach it. For `find . -type f -delete` it really does; for `rm *` it cannot (`*`
-# skips dotfiles and rm does not recurse without -r), but a bound does not record that. Raised in
-# the pull request; strict, so these flip to failures once the policy or the semantics change.
-_KNOWN_DISAGREEMENTS = {
-    "rm *": "R8: a delete bounded by the workspace may reach the protected .git/config",
-    "find . -type f -delete": "R8: find . -delete really does delete .git/config",
-}
-
 
 def _expect_cases():
     for expect in DEFAULT.expects:
-        marks = []
-        if expect.command in _KNOWN_DISAGREEMENTS:
-            marks.append(pytest.mark.xfail(strict=True, reason=_KNOWN_DISAGREEMENTS[expect.command]))
-        yield pytest.param(expect, id=expect.command, marks=marks)
+        yield pytest.param(expect, id=expect.command)
 
 
 @pytest.mark.parametrize("expect", list(_expect_cases()))
