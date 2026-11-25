@@ -390,3 +390,42 @@ def test_effects_never_raise_and_are_well_formed(src):
         assert isinstance(effect, Effect)
         if isinstance(effect.target, PurePosixPath):
             assert effect.target.is_absolute() and ".." not in effect.target.parts
+
+
+# --------------------------------------------------------------------------- links
+
+
+@pytest.mark.parametrize(
+    ("src", "target"),
+    [
+        ("ln -s ~/.ssh/id_rsa k", HOME / ".ssh" / "id_rsa"),
+        ("ln ~/.ssh/id_rsa k", HOME / ".ssh" / "id_rsa"),
+        ("ln -s ~/.ssh keys", HOME / ".ssh"),
+        ("cp -l ~/.ssh/id_rsa k", HOME / ".ssh" / "id_rsa"),
+    ],
+)
+def test_a_link_reads_and_writes_its_target(src, target):
+    # Whatever later uses the link uses the target, under a name the policy cannot tell apart.
+    found = {(kind, path) for kind, path, _ in effects(src)}
+    assert (K.READ, target) in found
+    assert (K.WRITE, target) in found
+
+
+def test_a_relative_symlink_is_read_from_the_link_directory():
+    found = effects("ln -sT ../.ssh/id_rsa sub/k")
+    assert (K.READ, WS / ".ssh" / "id_rsa", Bounded) in found
+    assert (K.READ, WS.parent / ".ssh" / "id_rsa", Bounded) not in found
+
+
+def test_a_relative_symlink_into_a_maybe_directory_keeps_both_readings():
+    found = effects("ln -s x ~/k")
+    assert (K.READ, HOME / "x", Bounded) in found
+    assert (K.READ, HOME / "k" / "x", Bounded) in found
+
+
+def test_relative_flag_reads_the_target_from_here():
+    assert (K.READ, WS.parent / "x", Bounded) in effects("ln -sr ../x d/k")
+
+
+def test_a_symlink_in_an_unseen_directory_is_unknown():
+    assert unknown_of('ln -s x "$D"', K.READ)
