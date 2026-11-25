@@ -234,6 +234,11 @@ def _copy(remove_sources: bool) -> Callable[[str, Parsed], list[Want]]:
             return []  # usage error, nothing runs
         recursive = remove_sources or p.has("r", "R", "a")
         wants: list[Want] = [OnPath(READ, s, recursive) for s in sources]
+        if not remove_sources and p.has("s", "l"):
+            # `cp -s` and `cp -l` make links, not copies: a later write to the copy writes the
+            # source (see `_ln`). cp accepts only absolute sources for a symbolic link outside
+            # the working directory, so the sources are already paths from here.
+            wants += [OnPath(WRITE, s, True) for s in sources]
         if remove_sources:
             wants += [OnPath(DELETE, s, True) for s in sources]
         return wants + [OnPath(WRITE, dest, True)]
@@ -249,13 +254,77 @@ entry("mv", opts=Opts("finvTu", "t", _COPY_LONG, dangerous={"t": WRITE}))(_copy(
 @entry(
     "ln",
     opts=Opts(
-        "sfnvTr", "t", {"symbolic": "s", "force": "f", "target-directory": "t"}, dangerous={"t": WRITE}
+        "sfnvTr",
+        "t",
+        {
+            "symbolic": "s",
+            "force": "f",
+            "no-dereference": "n",
+            "verbose": "v",
+            "no-target-directory": "T",
+            "relative": "r",
+            "target-directory": "t",
+        },
+        dangerous={"t": WRITE},
     ),
 )
 def _ln(name: str, p: Parsed) -> list[Want]:
+    # A link is a second name for its target: whatever later reads or writes the link reads or
+    # writes the target, and the policy will only ever see the link's name. So the target counts
+    # as read and written here, when the link is made: `ln -s ~/.ssh/id_rsa k && cat k` is a read
+    # of the key, and `ln ~/.ssh/id_rsa k` (a hard link) the same.
     targets = p.values("t")
-    dest = targets[0] if targets else (p.operands[-1] if len(p.operands) > 1 else HERE)
-    return [OnPath(WRITE, dest, True)]
+    if targets:
+        dest, sources, inside = targets[0], p.operands, True
+    elif len(p.operands) > 1:
+        dest, sources, inside = p.operands[-1], p.operands[:-1], len(p.operands) > 2
+    else:
+        dest, sources, inside = HERE, p.operands, True
+    wants: list[Want] = [OnPath(WRITE, dest, True)]
+    symbolic = p.has("s") and not p.has("r")
+    for source in sources:
+        for target in _link_targets(source, dest, symbolic, inside, p.has("T")):
+            wants += [OnPath(READ, target, True), OnPath(WRITE, target, True)]
+    return wants
+
+
+def _link_targets(source: Arg, dest: Arg, symbolic: bool, inside: bool, not_dir: bool) -> list[Arg]:
+    """Where a link made from `source` points, as paths from the working directory.
+
+    A hard link, and a symbolic link made with `-r`, take `source` from the working directory. A
+    symbolic link stores `source` as written, and a relative one is read from the directory the
+    link sits in. That is `dest` itself when the link goes inside it (`-t`, several sources, or
+    `dest` an existing directory, which we cannot see, so both are kept unless `-T` rules it out),
+    and otherwise the directory part of `dest`."""
+    if not symbolic or isinstance(source, Unresolved) or source.text.startswith("/"):
+        return [source]
+    if isinstance(dest, Unresolved):
+        return [Unresolved("a relative symbolic link placed in a directory we cannot see")]
+    if inside:
+        bases = [dest]
+    elif not_dir:
+        bases = [_dirname(dest)]
+    else:
+        bases = [_dirname(dest), dest]
+    return [_join(base, source) for base in dict.fromkeys(bases)]
+
+
+def _dirname(path: Field) -> Field:
+    head = path.text.rstrip("/").rpartition("/")[0] if "/" in path.text.rstrip("/") else "."
+    head = head or "/"
+    glob = path.glob_at if path.glob_at is not None and path.glob_at < len(head) else None
+    return Field(head, glob)
+
+
+def _join(base: Field, rel: Field) -> Field:
+    prefix = base.text.rstrip("/") + "/"
+    if base.glob_at is not None and base.glob_at < len(base.text):
+        glob: int | None = base.glob_at
+    elif rel.glob_at is not None:
+        glob = len(prefix) + rel.glob_at
+    else:
+        glob = None
+    return Field(prefix + rel.text, glob)
 
 
 @entry("tee", opts=_o("aip", long={"append": "a", "ignore-interrupts": "i"}))
