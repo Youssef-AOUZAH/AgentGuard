@@ -162,11 +162,15 @@ class TempDirExecutor:
                 return self._real[name].joinpath(*path.relative_to(posix).parts)
         return None
 
-    def initial_state(self) -> SessionState:
-        """A fresh session: working directory at the workspace root, no variables, no history."""
-        return SessionState(
-            cwd=self.workspace, home=self.home, workspace=self.workspace, gate_root=self._posix[".gate"]
-        )
+    def initial_state(self, gate_root: PurePosixPath | None = None) -> SessionState:
+        """A fresh session: working directory at the workspace root, no variables, no history.
+
+        `gate_root` is what R8 protects. Pass `gate.policy_loader.checkout_root()` when the gate
+        runs on a real machine, so the gate's own code and policies are covered; without it, the
+        sandbox's private `.gate` directory is used, which is enough for tests.
+        """
+        root = gate_root if gate_root is not None else self._posix[".gate"]
+        return SessionState(cwd=self.workspace, home=self.home, workspace=self.workspace, gate_root=root)
 
     def close(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
