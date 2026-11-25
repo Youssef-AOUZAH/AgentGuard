@@ -48,6 +48,7 @@ from compiler.policy_syntax import (
     Condition,
     EffectSubject,
     HostIn,
+    ListRef,
     PathPattern,
     PolicyFile,
     ProgramIn,
@@ -85,6 +86,7 @@ ZONE_ORDER = (Zone.SECRET, Zone.DEVICE, Zone.WORKSPACE, Zone.TEMP, Zone.SYSTEM, 
 EVERY_ZONE = frozenset(ZONE_ORDER)
 
 _ZONE_DETAIL = re.compile(r"zone ([a-z]+)")
+_LIST_DETAIL = re.compile(r"list (\S+)")
 
 
 class Tri(IntEnum):
@@ -263,8 +265,7 @@ class _Evaluator:
         needed = Tri.YES if rule.verdict is Verdict.ALLOW else Tri.MAYBE
         if value < needed:
             return False
-        detail = f"zone {zone}" if zone is not None else ""
-        self.votes.append((rule.verdict, Reason(rule.rule, effect, detail)))
+        self.votes.append((rule.verdict, Reason(rule.rule, effect, _about(rule, effect, zone, value))))
         return True
 
     # ---- conditions
@@ -328,8 +329,13 @@ class _Evaluator:
         return best
 
     def repeats(self, by: RepeatBy, effect: Effect, zone: Zone | None) -> Tri:
-        for kind, target, denied_zone in self.denied:
+        best = Tri.NO
+        for kind, target, denied_zone, denied_list in self.denied:
             if kind is not effect.kind:
+                continue
+            if by is RepeatBy.ZONE and denied_list is not None:
+                patterns = [bind(p, self.state) for p in self.policy.list_items(ListRef(denied_list, 0))]
+                best = max(best, _target_in(effect, patterns))  # type: ignore[arg-type]
                 continue
             if by is RepeatBy.ZONE and zone is not None:
                 if denied_zone == zone:
@@ -337,7 +343,7 @@ class _Evaluator:
                 continue
             if target is not None and target == effect.target:
                 return Tri.YES
-        return Tri.NO
+        return best
 
 
 # --------------------------------------------------------------------------- helpers
@@ -446,16 +452,39 @@ def _substitution_depth(script: Script) -> int:
     return depth
 
 
-def _denied(state: SessionState) -> list[tuple[EffectKind, object, Zone | None]]:
-    """What was refused earlier: kind, target, and the zone the refusal was about if it said."""
-    out: list[tuple[EffectKind, object, Zone | None]] = []
+def _about(rule: Rule, effect: Effect | None, zone: Zone | None, value: Tri) -> str:
+    """What a vote was about, written into the reason's `detail` for R9 to read back.
+
+    Usually the zone. Two cases are narrower, because recording the zone would make far too much
+    a retry afterwards. A target we know nothing about touches every zone, but the refusal was not
+    about any of them, so `rm $(cat list)` records none. And a rule that fired only because a
+    bounded target *may* reach a path in a list was about that list, not the whole zone: `rm -rf
+    /` may reach `{gate}/**` from every zone, and recording `zone workspace` for that would make
+    `rm notes.txt` a retry."""
+    if effect is None or zone is None or isinstance(effect.resolution, Unknown):
+        return ""
+    if value is Tri.MAYBE:
+        for c in rule.conditions:
+            if isinstance(c, TargetIn) and not c.negated and isinstance(c.source, ListRef):
+                return f"list {c.source.name}"
+    return f"zone {zone}"
+
+
+_Denied = tuple[EffectKind, object, Zone | None, str | None]
+
+
+def _denied(state: SessionState) -> list[_Denied]:
+    """What was refused earlier: kind, target, and the zone or the list the refusal was about if
+    it said (see `_about`)."""
+    out: list[_Denied] = []
     for entry in state.denied:
         for reason in entry.decision.reasons:
             if reason.effect is None:
                 continue
             match = _ZONE_DETAIL.fullmatch(reason.detail)
             zone = Zone(match.group(1)) if match and match.group(1) in Zone._value2member_map_ else None
-            out.append((reason.effect.kind, reason.effect.target, zone))
+            listed = _LIST_DETAIL.fullmatch(reason.detail)
+            out.append((reason.effect.kind, reason.effect.target, zone, listed.group(1) if listed else None))
     return out
 
 

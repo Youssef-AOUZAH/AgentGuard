@@ -248,6 +248,24 @@ def test_refused_unknown_exec_does_not_make_every_later_command_a_retry():
     assert decide("ls", state=state).verdict is Verdict.ALLOW
 
 
+def test_a_refusal_that_may_reach_a_list_is_about_the_list_not_the_zone():
+    # `rm -rf /` may reach the protected paths from inside the workspace. That vote is about the
+    # protected paths, so ordinary workspace deletes afterwards are not retries, while deleting a
+    # protected path, or anything in a zone the refusal was really about, still is.
+    state = refused(START, "rm -rf /", decide("rm -rf /"))
+    assert decide("rm notes.txt", state=state).verdict is Verdict.ALLOW
+    assert decide("rm -rf build", state=state).verdict is Verdict.ALLOW
+    assert RuleId.R9 in rules(decide("rm .git/config", state=state))
+    assert RuleId.R9 in rules(decide("rm /etc/x", state=state))
+
+
+def test_a_refused_unknown_target_is_about_no_zone():
+    # `rm $(cat list)` could delete anything, so it touched every zone, but a later delete of a
+    # named workspace file is not a second try at it.
+    state = refused(START, "rm $(cat list)", decide("rm $(cat list)"))
+    assert decide("rm notes.txt", state=state).verdict is Verdict.ALLOW
+
+
 def test_retry_of_a_non_path_effect_is_the_same_target():
     p = policy("R6 deny net_out\nR9 deny any where repeats denied zone\nR10 allow exec where target known")
     state = refused(START, "curl https://evil.example", decide("curl https://evil.example", p))
