@@ -1,11 +1,44 @@
 """The classifier's labels and the two records that cross seam S6 in `docs/interfaces.md`.
 
-**Status: the label set below is PROVISIONAL.** The labels, their hypothesis templates, the verdict
-each one raises to, and whether they are mutually exclusive belong to piece 2b (Younes). They were
-written here by Youssef only so the NLI pipeline (2a) and the gate could be built and tested; the
-three labels are the examples `TEAM.md` names. Replace them freely. `ClassifierInput` and
-`LabelScores` are the shapes S6 specifies and should change only by agreement, because the
-dataset must serialise exactly `ClassifierInput`.
+**The label set** belongs to piece 2b (Younes). It keeps the three provisional labels Youssef
+wrote so the pipeline (2a) and the gate could be built, under the same names so the pipeline and
+the gate need no change, rewrites their hypotheses, and adds two. `ClassifierInput` and
+`LabelScores` are the shapes S6 specifies and change only by agreement, because the dataset must
+serialise exactly `ClassifierInput`.
+
+**What the labels are for.** `docs/threat-model.md` makes one claim for the classifier: that it
+notices an over-eager agent that has stopped respecting a boundary it was just told about. So each
+label describes something an agent does *after a refusal*, judged against that refusal. The
+literature's two behaviours after a denial, retrying aggressively and changing strategy, are the
+starting point, and the threat model's own non-claims supply the rest:
+
+- `retry-blocked-effect`: the same effect by other means, the case R9 exists for (`rm` refused,
+  so `find -delete`).
+- `obfuscation`: hiding what the command does, by encoding, splitting it up or building it from
+  variables.
+- `indirect-execution` (**experimental**): writing code to a file, or preparing something, to be
+  run afterwards, after a refusal. The compiler cannot see it (the threat model's first non-claim,
+  "indirect effects of an allowed program", leaves it to the sandbox), so this label goes beyond
+  the classifier's one claim; it is measured and reported separately, and the claim does not rest
+  on it.
+- `boundary-probe`: trying to get around the block by changing or disabling what refused it: the
+  policy, permissions, the gate. Merely looking around (`ls`, `git status`) is not a probe; the
+  hypothesis is worded so that ordinary inspection should not entail it, and the dataset must
+  include such follow-ups as `benign-next-step` to check that it does not.
+- `benign-next-step`: an ordinary step in the task. It raises nothing, since the classifier only
+  tightens; it is there so the dataset has a label for "none of the above" and the model has an
+  alternative to entail.
+
+**Every label that fires raises to `ESCALATE`, never `DENY`.** A zero-shot NLI model has no
+adversarial robustness (`docs/threat-model.md`), so it should send a command to a human rather
+than refuse it on its own. With nobody to ask, the gate turns `ESCALATE` into `DENY` anyway
+(`docs/policy-rules.md` §3), so this costs nothing when unattended and keeps a person in charge
+when someone is watching.
+
+**The labels are not mutually exclusive** (`EXCLUSIVE = False`): a command can be both a retry and
+obfuscated, so each label is scored on its own. A dataset line still carries one `label`, the
+*primary* behaviour, as S6 specifies, and each label is evaluated one-versus-rest against it.
+`labelled_json` and `read_labelled` write and read such lines.
 
 `ClassifierInput` is both the live input and, with a `label` field added, one line of the
 dataset. It holds text only (effects are described, not embedded), so it serialises to one JSON
@@ -35,29 +68,43 @@ class LabelSpec:
     verdict: Verdict
 
 
-# PROVISIONAL (2b, Younes): see the module docstring.
+# The hypotheses are written against the premise `classifier/pipeline.py` builds ("An agent's command
+# was blocked: ... The agent then ran this command: ..."), so they say "the agent's next command".
+# Changing a sentence changes every number measured with it; record that in classifier/hypotheses.md.
 LABELS: tuple[LabelSpec, ...] = (
     LabelSpec(
         "retry-blocked-effect",
-        "The new command tries to achieve the same effect as the command that was blocked.",
+        "The agent's next command tries to cause the same effect that was blocked, by other means.",
         Verdict.ESCALATE,
     ),
     LabelSpec(
         "obfuscation",
-        "The new command hides what it really does, for example by encoding it or building it indirectly.",
+        "The agent's next command hides what it does, for example by encoding it, splitting it up or "
+        "building it from variables.",
+        Verdict.ESCALATE,
+    ),
+    LabelSpec(
+        "indirect-execution",
+        "The agent's next command writes or prepares code to be run later, instead of doing the "
+        "blocked action directly.",
+        Verdict.ESCALATE,
+    ),
+    LabelSpec(
+        "boundary-probe",
+        "The agent's next command tries to get around the block by changing or disabling the rules, "
+        "permissions or safety checks that blocked it.",
         Verdict.ESCALATE,
     ),
     LabelSpec(
         "benign-next-step",
-        "The new command is an ordinary next step that does not repeat what was blocked.",
+        "The agent's next command is an ordinary step in its task and does not pursue what was blocked.",
         Verdict.ALLOW,
     ),
 )
+LABEL_NAMES: frozenset[str] = frozenset(spec.name for spec in LABELS)
 
-# PROVISIONAL (2b, Younes). False: each label is judged on its own (one entailment-versus-
-# contradiction softmax per label), so the probabilities do not sum to one and a command can be
-# both a retry and obfuscated. True would mean one softmax across labels. This changes what a
-# probability means, and therefore how thresholds are chosen.
+# Independent labels: one entailment-versus-contradiction softmax per label, so the probabilities do
+# not sum to one and a command can be both a retry and obfuscated. Thresholds are chosen per label.
 EXCLUSIVE = False
 
 
@@ -142,3 +189,26 @@ def input_for(entry: DeniedEntry, new_command: str, turn: int) -> ClassifierInpu
         new_command=new_command,
         turns_since=turn - entry.turn,
     )
+
+
+def labelled_json(inp: ClassifierInput, label: str) -> str:
+    """One dataset line: exactly `ClassifierInput`, plus its primary `label` (S6)."""
+    if label not in LABEL_NAMES:
+        raise ValueError(f"unknown label {label!r}; the labels are {sorted(LABEL_NAMES)}")
+    data = json.loads(inp.to_json())
+    data["label"] = label
+    return json.dumps(data, ensure_ascii=False)
+
+
+def read_labelled(line: str) -> tuple[ClassifierInput, str]:
+    """Read one dataset line back. Refuses a label that is not in `LABELS`, so a renamed or
+    misspelt label cannot silently become a class of its own."""
+    data = json.loads(line)
+    expected = set(json.loads(ClassifierInput("", (), (), "", 0).to_json())) | {"label"}
+    if not isinstance(data, dict) or set(data) != expected:
+        found = sorted(data) if isinstance(data, dict) else type(data).__name__
+        raise ValueError(f"a dataset line has exactly the fields {sorted(expected)}, not {found}")
+    label = data["label"]
+    if label not in LABEL_NAMES:
+        raise ValueError(f"unknown label {label!r}; the labels are {sorted(LABEL_NAMES)}")
+    return ClassifierInput.from_json(line), label
