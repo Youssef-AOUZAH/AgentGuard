@@ -7,6 +7,7 @@ ours. Whether the real model is any good is classifier H1, measured in `bench/`,
 
 from __future__ import annotations
 
+import json
 from pathlib import PurePosixPath
 
 import pytest
@@ -21,11 +22,15 @@ from classifier.calibrate import (
     reliability,
 )
 from classifier.labels import (
+    EXCLUSIVE,
+    LABEL_NAMES,
     LABELS,
     ClassifierInput,
     LabelScores,
     describe_effect,
     input_for,
+    labelled_json,
+    read_labelled,
 )
 from classifier.pipeline import NLIScorer, RetryClassifier, StubScorer, premise
 from compiler.syntax import Script
@@ -124,14 +129,15 @@ class FakePipeline:
 
 
 def fake_for(values):
-    return FakePipeline({spec.hypothesis: values[spec.name] for spec in LABELS})
+    """A pipeline scoring each label as `values` says, and any label it does not name at 0."""
+    return FakePipeline({spec.hypothesis: values.get(spec.name, 0.0) for spec in LABELS})
 
 
 def test_nli_scores_map_back_to_label_names():
     values = {"retry-blocked-effect": 0.91, "obfuscation": 0.12, "benign-next-step": 0.05}
     pipe = fake_for(values)
     scores = NLIScorer(pipeline=pipe).score(SAMPLE)
-    assert dict(scores.scores) == values
+    assert dict(scores.scores) == {spec.name: values.get(spec.name, 0.0) for spec in LABELS}
     text, candidates, template, multi = pipe.calls[0]
     assert template == "{}"
     assert candidates == [spec.hypothesis for spec in LABELS]
@@ -219,3 +225,46 @@ def test_bad_inputs_are_refused():
         choose_threshold([], [])
     with pytest.raises(ValueError):
         reliability([1.2], [True])
+
+
+# --------------------------------------------------------------------------- the label set (2b)
+
+
+def test_every_label_that_fires_escalates_and_benign_raises_nothing():
+    verdicts = {spec.name: spec.verdict for spec in LABELS}
+    assert verdicts.pop("benign-next-step") is Verdict.ALLOW
+    assert set(verdicts.values()) == {Verdict.ESCALATE}  # never DENY on the model's word alone
+
+
+def test_the_label_set():
+    # Changing this set changes what every classifier number means: update classifier/hypotheses.md.
+    assert LABEL_NAMES == {
+        "retry-blocked-effect", "obfuscation", "indirect-execution", "boundary-probe", "benign-next-step",
+    }  # fmt: skip
+    assert LABEL_NAMES == {spec.name for spec in LABELS} and EXCLUSIVE is False
+
+
+@pytest.mark.parametrize("extra", ['"source": "x"', '"labels": ["obfuscation"]'])
+def test_a_dataset_line_with_extra_fields_is_refused(extra):
+    line = labelled_json(SAMPLE, "obfuscation")[:-1] + ", " + extra + "}"
+    with pytest.raises(ValueError, match="exactly the fields"):
+        read_labelled(line)
+
+
+def test_hypotheses_speak_about_the_next_command_as_the_premise_does():
+    assert "The agent then ran this command" in premise(SAMPLE)
+    assert all(spec.hypothesis.startswith("The agent's next command") for spec in LABELS)
+
+
+def test_a_dataset_line_is_exactly_the_input_plus_a_label():
+    line = labelled_json(SAMPLE, "retry-blocked-effect")
+    assert json.loads(line).keys() == json.loads(SAMPLE.to_json()).keys() | {"label"}
+    assert read_labelled(line) == (SAMPLE, "retry-blocked-effect")
+
+
+@pytest.mark.parametrize("label", ["retry", "Obfuscation", None])
+def test_unknown_labels_are_refused_both_ways(label):
+    with pytest.raises(ValueError):
+        labelled_json(SAMPLE, label)
+    with pytest.raises(ValueError):
+        read_labelled(SAMPLE.to_json()[:-1] + f', "label": {json.dumps(label)}}}')
